@@ -1,0 +1,16 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Deploy to Raspberry Pi",
+      "type": "shell",
+      "command": "ssh -t money-sorter@money-sorter.local \"bash ~/deploy-moneysort.sh\"",
+      "options": {
+        "env": {
+          "PYTHONUNBUFFERED": "1"
+        }
+      },
+      "problemMatcher": []
+    }
+  ]
+}
