@@ -4,7 +4,7 @@
     {
       "label": "Deploy to Raspberry Pi",
       "type": "shell",
-      "command": "ssh money-sorter@${input:piAddress} \"~/deploy-moneysort.sh\"",
+      "command": "ssh money-sorter@${input:piAddress} \"~/deploy.sh\"",
       "dependsOn": ["Git Commit and Push"],
       "problemMatcher": [],
       "group": {
