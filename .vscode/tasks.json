@@ -4,13 +4,27 @@
     {
       "label": "Deploy to Raspberry Pi",
       "type": "shell",
-      "command": "ssh -t money-sorter@money-sorter.local \"bash ~/deploy-moneysort.sh\"",
-      "options": {
-        "env": {
-          "PYTHONUNBUFFERED": "1"
-        }
-      },
+      "command": "ssh money-sorter@192.168.88.4 \"~/deploy-moneysort.sh\"",
+      "dependsOn": ["Git Commit and Push"],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Git Commit and Push",
+      "type": "shell",
+      "command": "git add .; git commit -m \"${input:commitMessage}\"; git push",
       "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "commitMessage",
+      "type": "promptString",
+      "description": "Enter commit message",
+      "default": "update"
     }
   ]
 }
