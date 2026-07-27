@@ -9,8 +9,14 @@ All '-' terminals bus to Pi GND; ENA disconnected (drivers always enabled).
 
 If a joint runs the wrong way, set invert=True for it in JOINTS.
 """
+import json
+import os
+
 import lgpio
 from stepper import Stepper
+
+# Runtime state file read by dashboard.py (same directory as this module).
+STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 
 # axis -> (step_pin, dir_pin, invert_dir)   BCM numbering; see docs/PINOUT.md
 JOINTS = {
@@ -37,12 +43,30 @@ class Arm:
             name: Stepper(self.h, step, dir_, invert_dir=inv, **stepper_kwargs)
             for name, (step, dir_, inv) in joints.items()
         }
+        self._write_state()
+
+    # --- dashboard state --------------------------------------------------
+    def _write_state(self, moving=False):
+        """Atomically dump joint angles + status to state.json for the dashboard."""
+        state = {
+            "joints": {name: round(m.angle, 1) for name, m in self.motors.items()},
+            "moving": moving,
+            "enabled": self._enabled,
+        }
+        try:
+            tmp = STATE_PATH + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(state, f)
+            os.replace(tmp, STATE_PATH)   # atomic swap; dashboard never sees a partial file
+        except OSError:
+            pass
 
     # --- shared enable ----------------------------------------------------
     def enable(self):
         """Energize all drivers (motors hold). Always works: no opto current."""
         lgpio.gpio_write(self.h, self.enable_pin, 0)
         self._enabled = True
+        self._write_state()
 
     def disable(self):
         """Release all drivers (motors go free).
@@ -53,6 +77,7 @@ class Arm:
         """
         lgpio.gpio_write(self.h, self.enable_pin, 1)
         self._enabled = False
+        self._write_state()
 
     @property
     def enabled(self):
@@ -62,15 +87,27 @@ class Arm:
         return self.motors[name]
 
     def move(self, name, steps, max_pps=None):
-        self.motors[name].move(steps, max_pps=max_pps)
+        self._write_state(moving=True)
+        try:
+            self.motors[name].move(steps, max_pps=max_pps)
+        finally:
+            self._write_state(moving=False)
 
     def move_degrees(self, name, degrees, max_pps=None):
-        self.motors[name].move_degrees(degrees, max_pps=max_pps)
+        self._write_state(moving=True)
+        try:
+            self.motors[name].move_degrees(degrees, max_pps=max_pps)
+        finally:
+            self._write_state(moving=False)
 
     def home_all(self, max_pps=None):
         """Return every joint to its start position, one at a time."""
-        for m in self.motors.values():
-            m.go_home(max_pps=max_pps)
+        self._write_state(moving=True)
+        try:
+            for m in self.motors.values():
+                m.go_home(max_pps=max_pps)
+        finally:
+            self._write_state(moving=False)
 
     def angles(self):
         return {name: round(m.angle, 1) for name, m in self.motors.items()}

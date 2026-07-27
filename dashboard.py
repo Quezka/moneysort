@@ -177,10 +177,11 @@ async function tick() {
     card("Uptime", d.uptime, "", "");
 
   const a = d.arm, dot = document.getElementById("armdot"), st = document.getElementById("armstate");
-  const names = ["base", "shoulder", "elbow"];
-  if (a && a._live) {
-    dot.className = "dot live";
-    st.textContent = a.moving ? "MOVING" : "idle";
+  const names = ["x", "y", "z"];
+  if (a) {
+    dot.className = a.moving ? "dot live" : "dot";
+    const age = a._age != null ? `updated ${a._age}s ago` : "";
+    st.textContent = a.moving ? "MOVING" : ("idle · " + age);
     st.className = a.moving ? "moving" : "idle";
     document.getElementById("joints").innerHTML = names.map(n =>
       `<div class="card joint"><div class="label">${n}</div>
@@ -188,7 +189,7 @@ async function tick() {
     ).join("");
   } else {
     dot.className = "dot";
-    st.textContent = "no controller running";
+    st.textContent = "no data yet";
     document.getElementById("joints").innerHTML = names.map(n =>
       `<div class="card joint"><div class="label">${n}</div><div class="value idle">&mdash;<span class="unit">&deg;</span></div></div>`
     ).join("");
