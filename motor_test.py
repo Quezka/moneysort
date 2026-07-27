@@ -1,57 +1,31 @@
 #!/usr/bin/env python3
-"""Motor 1 test - direct 3.3V common-cathode (no shifter needed).
+"""Fast motor test using the Stepper class (lgpio, hardware-timed pulses).
 
-Wiring (common-cathode, HIGH = active):
-    GPIO17 -> PUL+     GPIO27 -> DIR+
-    all '-' terminals bussed to Pi GND
-    ENA disconnected -> driver always enabled
+Wiring: GPIO17 -> PUL+, GPIO27 -> DIR+, '-' bus -> GND (direct 3.3V).
 
 Usage (run on the Pi):
-    python3 motor_test.py [pulses] [direction] [pps]
-        pulses    : number of step pulses (default 800)
-        direction : 1 or 0 (default 1)
-        pps       : target pulses per second at cruise (default 1000)
-
-Includes a linear acceleration ramp so higher speeds don't stall the motor:
-it starts slow, ramps up to `pps`, cruises, then ramps back down before stopping.
+    python3 motor_test.py [steps] [pps]
+        steps : signed step count (+ / - sets direction), default 3200
+        pps   : cruise pulses per second, default 6000
 """
 import sys
-from time import sleep
-from gpiozero import OutputDevice
+import time
+import lgpio
+from stepper import Stepper
 
-PUL = OutputDevice(17)   # HIGH = one step
-DIR = OutputDevice(27)   # rotation direction
+STEP_PIN, DIR_PIN = 17, 27
 
+steps = int(sys.argv[1]) if len(sys.argv) > 1 else 3200
+pps = int(sys.argv[2]) if len(sys.argv) > 2 else 6000
 
-def move(pulses, direction=1, pps=1000, ramp=250):
-    DIR.value = 1 if direction else 0
-    sleep(0.002)                          # let DIR settle
-
-    cruise = 1.0 / pps                    # target period between pulses
-    start = 1.0 / max(pps * 0.2, 150)     # begin ~5x slower than cruise
-    ramp = min(ramp, pulses // 2)         # can't ramp longer than half the move
-
-    for i in range(pulses):
-        if ramp and i < ramp:             # speeding up
-            period = start + (cruise - start) * (i / ramp)
-        elif ramp and i >= pulses - ramp: # slowing down
-            j = pulses - 1 - i
-            period = start + (cruise - start) * (j / ramp)
-        else:                             # cruise
-            period = cruise
-        half = period / 2
-        PUL.on()
-        sleep(half)
-        PUL.off()
-        sleep(half)
-
-
-n = int(sys.argv[1]) if len(sys.argv) > 1 else 800
-d = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-pps = int(sys.argv[3]) if len(sys.argv) > 3 else 1000
-print(f"Sending {n} pulses, direction={d}, cruise={pps} pulses/sec ...")
+h = lgpio.gpiochip_open(0)
+m = Stepper(h, STEP_PIN, DIR_PIN, max_pps=pps, accel_steps=600)
+print(f"tx queue capacity: {lgpio.tx_room(h, STEP_PIN, 0)} entries")
+print(f"Moving {steps} steps, cruise {pps} pps ...")
+t0 = time.time()
 try:
-    move(n, d, pps)
-    print("done")
+    m.move(steps)
+    print(f"done in {time.time() - t0:.2f}s")
 finally:
-    PUL.off()
+    m.close()
+    lgpio.gpiochip_close(h)
