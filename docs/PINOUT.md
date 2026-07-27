@@ -11,8 +11,8 @@ Raspberry Pi 4B → 2DM442 stepper drivers.
 - **Enable is a single shared line**: every driver's `ENA+` ties to **GPIO26**
   (pin 37). One pin enables/disables all axes at once. Driver default (pin LOW,
   ENA opto off) = enabled/holding; driving it HIGH disables all.
-  Caveat: HIGH must source ~3 optos in parallel from one 3.3V pin, which is
-  current-marginal — verify it actually releases before relying on disable.
+  Verified: driving HIGH releases all motors even sourcing ~3 optos from one
+  3.3V pin, so no buffer/transistor is needed.
 
 BCM numbers are the GPIO ids used in code; the pin column is the physical
 40-pin header position.
@@ -42,3 +42,21 @@ Shared: `ENA-` / `PUL-` / `DIR-` → GND bus (e.g. header pin 6).
 | Enable | ENA+            | GPIO26 | 37 | (shared)
 | Pulse  | PUL+            | GPIO23 | 16 |
 | Dir    | DIR+            | GPIO24 | 18 |
+
+## Calibration & travel
+
+Measured at the output shaft (folds in microstepping + gearing), at 20000 pps
+cruise. These live in `arm.py` `JOINTS`.
+
+| Axis | Joint | Full range | Notes |
+|------|-------|-----------|-------|
+| **z** | base | 360° ≈ **150,000 steps** | continuous rotation, no physical limit |
+| **y** | shoulder | ≈ **33,000 steps** end-to-end | **home switch at start** (homing TODO) |
+| **x** | elbow | not calibrated yet | — |
+
+- `z` has `steps_per_rev = 150000`, so `move_degrees()` is accurate for the base.
+- `y`/`x` still command in raw **steps** until their per-degree is measured.
+- `y` soft limits + homing against the start switch are **not implemented yet**;
+  position resets to 0 at daemon start, so there's no overtravel protection until
+  homing lands.
+- A comfortable cruise speed for all three axes is **20000 pps** (the default).

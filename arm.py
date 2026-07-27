@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Multi-axis arm built from Stepper joints sharing one gpiochip handle.
 
-Pin map (BCM), common-cathode direct-to-3.3V wiring:
-    base     STEP=GPIO17  DIR=GPIO27
-    shoulder STEP=GPIO23  DIR=GPIO24
-    elbow    STEP=GPIO5   DIR=GPIO6
-All '-' terminals bus to Pi GND; ENA disconnected (drivers always enabled).
+Axis map (BCM), common-cathode direct-to-3.3V wiring (see docs/PINOUT.md):
+    x = elbow     STEP=GPIO5   DIR=GPIO6
+    y = shoulder  STEP=GPIO17  DIR=GPIO27   (home switch at start; homing TODO)
+    z = base      STEP=GPIO23  DIR=GPIO24   (continuous rotation)
+Shared enable on GPIO26. All '-' terminals bus to Pi GND.
 
-If a joint runs the wrong way, set invert=True for it in JOINTS.
+If a joint runs the wrong way, set "invert": True for it in JOINTS.
 """
 import json
 import os
@@ -19,11 +19,18 @@ from stepper import Stepper
 # Runtime state file read by dashboard.py (same directory as this module).
 STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 
-# axis -> (step_pin, dir_pin, invert_dir)   BCM numbering; see docs/PINOUT.md
+# axis -> config (BCM pins + calibration). See docs/PINOUT.md.
+#   step, dir     : BCM gpio for PUL+ / DIR+
+#   invert        : flip if positive moves the "wrong" way
+#   steps_per_rev : measured steps for a full 360 deg output turn (folds in
+#                   microstepping + gearing) -- makes move_degrees() accurate
+#   travel        : usable range in steps for a limited joint (home switch)
+#   homed         : has a home/limit switch (homing itself is TODO)
 JOINTS = {
-    "x": (5,  6,  False),   # elbow     PUL=GPIO5  (pin29), DIR=GPIO6  (pin31)
-    "y": (17, 27, False),   # shoulder  PUL=GPIO17 (pin11), DIR=GPIO27 (pin13)
-    "z": (23, 24, False),   # base      PUL=GPIO23 (pin16), DIR=GPIO24 (pin18)
+    "x": {"step": 5,  "dir": 6,  "invert": False},                            # elbow (uncalibrated)
+    "y": {"step": 17, "dir": 27, "invert": False,
+          "travel": 33000, "homed": True},                                    # shoulder: ~33k-step range, home switch at start
+    "z": {"step": 23, "dir": 24, "invert": False, "steps_per_rev": 150000},   # base: continuous, 360 deg ~= 150k steps
 }
 
 # Single shared enable line: every driver's ENA+ ties to this pin.
@@ -40,10 +47,16 @@ class Arm:
         # Claim LOW so all drivers come up enabled/holding.
         lgpio.gpio_claim_output(self.h, enable_pin, 0)
         self._enabled = True
-        self.motors = {
-            name: Stepper(self.h, step, dir_, invert_dir=inv, **stepper_kwargs)
-            for name, (step, dir_, inv) in joints.items()
-        }
+        self.cfg = joints                       # per-axis config (limits, homed, ...)
+        self.motors = {}
+        for name, c in joints.items():
+            kw = dict(stepper_kwargs)
+            if "steps_per_rev" in c:
+                kw["steps_per_rev"] = c["steps_per_rev"]
+                kw.setdefault("microsteps", 1)
+            self.motors[name] = Stepper(
+                self.h, c["step"], c["dir"],
+                invert_dir=c.get("invert", False), **kw)
         self._write_state()
 
     # --- dashboard state --------------------------------------------------
