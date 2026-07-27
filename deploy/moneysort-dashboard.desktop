@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Money Sorter Dashboard
+Comment=Open the arm dashboard fullscreen (kiosk)
+Exec=/home/money-sorter/projects/moneysort/kiosk.sh
+Icon=chromium
+Terminal=false
+Categories=Utility;

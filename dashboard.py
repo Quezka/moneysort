@@ -141,6 +141,15 @@ def system_action(action):
         return False
 
 
+def exit_kiosk():
+    """Close the fullscreen Chromium kiosk, returning to the labwc desktop."""
+    try:
+        subprocess.Popen(["pkill", "-f", "chromium"])
+        return True
+    except OSError:
+        return False
+
+
 def snapshot():
     mem_used, mem_total = mem_pct()
     disk_used, disk_total = disk_pct()
@@ -210,6 +219,7 @@ PAGE = """<!doctype html><html lang="en"><head>
     <button id="estop" class="estop">&#9940; EMERGENCY DISABLE</button>
     <button id="reenable" class="reenable" style="display:none">Re-enable motors</button>
     <span class="spacer"></span>
+    <button id="desktop" class="sys">&#128421; Desktop</button>
     <button id="reboot" class="sys">&#8635; Reboot</button>
     <button id="poweroff" class="sys danger">&#9099; Power off</button>
   </div>
@@ -260,6 +270,7 @@ async function tick() {
 async function post(path) { try { await fetch(path, { method: "POST" }); } catch {} }
 document.getElementById("estop").onclick = () => post("/disable").then(tick);
 document.getElementById("reenable").onclick = () => post("/enable").then(tick);
+document.getElementById("desktop").onclick = () => post("/kiosk-exit");
 document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?")) post("/reboot"); };
 document.getElementById("poweroff").onclick = () => { if (confirm("Power OFF the Pi?")) post("/poweroff"); };
 tick(); setInterval(tick, 1500);

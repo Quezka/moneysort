@@ -146,6 +146,8 @@ def make_handler(ctrl):
                     ctrl.move(b.get("axis"), b.get("steps", 0), b.get("pps"))
                 elif self.path.startswith("/home"):
                     ctrl.home(self._body().get("pps"))
+                elif self.path.startswith("/kiosk-exit"):
+                    dashboard.exit_kiosk()
                 elif self.path.startswith("/reboot"):
                     dashboard.system_action("reboot")
                 elif self.path.startswith("/poweroff"):
