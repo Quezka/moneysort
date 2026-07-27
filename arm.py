@@ -35,7 +35,7 @@ JOINTS = {
     "x": {"step": 5,  "dir": 6,  "invert": False,
           "home_pin": 7, "home_dir": 1},                                      # elbow: home toward +steps (UNVERIFIED)
     "y": {"step": 17, "dir": 27, "invert": False, "travel": 33000,
-          "home_pin": 8, "home_dir": -1},                                     # shoulder: ~33k travel, home toward -steps
+          "steps_per_rev": 132000, "home_pin": 8, "home_dir": -1},            # shoulder: 0..33000 steps = 0..90 deg, home (0) toward -steps
     "z": {"step": 23, "dir": 24, "invert": False, "steps_per_rev": 157005},   # base: measured via full rev, 360 deg = 157005 steps (90 deg = 39251)
 }
 
@@ -69,6 +69,14 @@ class Arm:
             if "home_pin" in c:
                 lgpio.gpio_claim_input(self.h, c["home_pin"], lgpio.SET_PULL_UP)
                 self.home_pins[name] = c["home_pin"]
+        # Soft travel limits (enforced only once an axis is homed). Home sits at
+        # position 0; the usable range extends opposite the home direction.
+        self._limits = {}
+        for name, c in joints.items():
+            t = c.get("travel")
+            if t:
+                self._limits[name] = (0, t) if c.get("home_dir", -1) < 0 else (-t, 0)
+        self.homed = set()
         self._write_state()
 
     # --- dashboard state --------------------------------------------------
@@ -107,7 +115,17 @@ class Arm:
     def __getitem__(self, name):
         return self.motors[name]
 
+    def _clamp_steps(self, name, steps):
+        """Trim `steps` so a homed, travel-limited axis can't overtravel."""
+        lim = self._limits.get(name)
+        if lim is None or name not in self.homed:
+            return steps
+        lo, hi = lim
+        pos = self.motors[name].position
+        return max(lo, min(hi, pos + steps)) - pos
+
     def move(self, name, steps, max_pps=None):
+        steps = self._clamp_steps(name, int(steps))
         self._write_state(moving=True)
         try:
             self.motors[name].move(steps, max_pps=max_pps)
@@ -115,11 +133,8 @@ class Arm:
             self._write_state(moving=False)
 
     def move_degrees(self, name, degrees, max_pps=None):
-        self._write_state(moving=True)
-        try:
-            self.motors[name].move_degrees(degrees, max_pps=max_pps)
-        finally:
-            self._write_state(moving=False)
+        m = self.motors[name]
+        self.move(name, round(degrees / 360.0 * m.eff_spr), max_pps=max_pps)
 
     def home_all(self, max_pps=None):
         """Return every joint to its start position, one at a time."""
@@ -139,7 +154,7 @@ class Arm:
         """
         plans = {}
         for name, steps in moves.items():
-            steps = int(steps)
+            steps = self._clamp_steps(name, int(steps))
             if steps == 0:
                 continue
             m = self.motors[name]
@@ -219,6 +234,7 @@ class Arm:
             while not home():
                 m.jog(hd * fine, slow_pps)
             m.position = 0
+            self.homed.add(axis)               # enable soft limits for this axis
         finally:
             self._write_state(moving=False)
 

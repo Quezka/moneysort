@@ -95,6 +95,7 @@ class ArmController:
             "enabled": self.arm.enabled,
             "estopped": self.estopped,
             "home": {ax: self.arm.at_home(ax) for ax in self.arm.home_pins},
+            "homed": sorted(self.arm.homed),
         }
 
     def close(self):
