@@ -29,6 +29,16 @@ sudo systemctl enable moneysort-arm.service
 sudo systemctl restart moneysort-arm.service
 sleep 1
 
+# Ensure labwc autostart launches the kiosk via `bash` (git doesn't preserve the
+# exec bit, so invoking the script path directly can fail with permission denied).
+echo "Configuring labwc autostart ..."
+AUTOSTART="$HOME/.config/labwc/autostart"
+install -d "$HOME/.config/labwc"
+touch "$AUTOSTART"
+grep -v 'kiosk\.sh' "$AUTOSTART" > "$AUTOSTART.tmp" 2>/dev/null || true
+mv "$AUTOSTART.tmp" "$AUTOSTART"
+echo "bash $DIR/kiosk.sh &" >> "$AUTOSTART"
+
 # Desktop + menu launcher to re-open the kiosk after "Exit to Desktop".
 echo "Installing desktop launcher ..."
 install -d "$HOME/Desktop" "$HOME/.local/share/applications"
