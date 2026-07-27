@@ -110,7 +110,8 @@ class Stepper:
         return self.position / self.eff_spr * 360.0
 
     def close(self):
-        lgpio.tx_pulse(self.h, self.step_pin, 0, 0)   # stop any pulses
+        # move() already waits for the train to finish, so just park low & free.
+        lgpio.gpio_write(self.h, self.step_pin, 0)
         lgpio.gpio_free(self.h, self.step_pin)
         lgpio.gpio_free(self.h, self.dir_pin)
         if self.en_pin is not None:
