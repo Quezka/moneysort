@@ -50,7 +50,7 @@ cruise. These live in `arm.py` `JOINTS`.
 
 | Axis | Joint | Full range | Notes |
 |------|-------|-----------|-------|
-| **z** | base | 90° = 40,500 steps → 360° = **162,000 steps** | continuous rotation, no physical limit |
+| **z** | base | 360° = **157,005 steps** (measured, full rev) → 90° ≈ 39,251 | continuous rotation, no physical limit |
 | **y** | shoulder | ≈ **33,000 steps** end-to-end | **home switch at start** (homing TODO) |
 | **x** | elbow | not calibrated yet | — |
 

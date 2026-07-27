@@ -30,7 +30,7 @@ JOINTS = {
     "x": {"step": 5,  "dir": 6,  "invert": False},                            # elbow (uncalibrated)
     "y": {"step": 17, "dir": 27, "invert": False,
           "travel": 33000, "homed": True},                                    # shoulder: ~33k-step range, home switch at start
-    "z": {"step": 23, "dir": 24, "invert": False, "steps_per_rev": 162000},   # base: continuous, 90 deg = 40500 steps -> 360 deg = 162000
+    "z": {"step": 23, "dir": 24, "invert": False, "steps_per_rev": 157005},   # base: measured via full rev, 360 deg = 157005 steps (90 deg = 39251)
 }
 
 # Single shared enable line: every driver's ENA+ ties to this pin.
