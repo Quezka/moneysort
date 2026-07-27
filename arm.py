@@ -20,9 +20,9 @@ STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.jso
 
 # axis -> (step_pin, dir_pin, invert_dir)   BCM numbering; see docs/PINOUT.md
 JOINTS = {
-    "x": (23, 24, False),   # PUL=GPIO23 (pin16), DIR=GPIO24 (pin18)
-    "y": (17, 27, False),   # PUL=GPIO17 (pin11), DIR=GPIO27 (pin13)
-    "z": (5,  6,  False),   # PUL=GPIO5  (pin29), DIR=GPIO6  (pin31)
+    "x": (5,  6,  False),   # elbow     PUL=GPIO5  (pin29), DIR=GPIO6  (pin31)
+    "y": (17, 27, False),   # shoulder  PUL=GPIO17 (pin11), DIR=GPIO27 (pin13)
+    "z": (23, 24, False),   # base      PUL=GPIO23 (pin16), DIR=GPIO24 (pin18)
 }
 
 # Single shared enable line: every driver's ENA+ ties to this pin.

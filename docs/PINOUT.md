@@ -17,7 +17,7 @@ Raspberry Pi 4B → 2DM442 stepper drivers.
 BCM numbers are the GPIO ids used in code; the pin column is the physical
 40-pin header position.
 
-## Y axis
+## Y axis (shoulder)
 
 | Signal | Driver terminal | BCM | Header pin |
 |--------|-----------------|-----|-----------|
@@ -27,18 +27,18 @@ BCM numbers are the GPIO ids used in code; the pin column is the physical
 
 Shared: `ENA-` / `PUL-` / `DIR-` → GND bus (e.g. header pin 6).
 
-## X axis
-
-| Signal | Driver terminal | BCM | Header pin |
-|--------|-----------------|-----|-----------|
-| Enable | ENA+            | GPIO26 | 37 | (shared)
-| Pulse  | PUL+            | GPIO23 | 16 |
-| Dir    | DIR+            | GPIO24 | 18 |
-
-## Z axis
+## X axis (elbow)
 
 | Signal | Driver terminal | BCM | Header pin |
 |--------|-----------------|-----|-----------|
 | Enable | ENA+            | GPIO26 | 37 | (shared)
 | Pulse  | PUL+            | GPIO5  | 29 |
 | Dir    | DIR+            | GPIO6  | 31 |
+
+## Z axis (base)
+
+| Signal | Driver terminal | BCM | Header pin |
+|--------|-----------------|-----|-----------|
+| Enable | ENA+            | GPIO26 | 37 | (shared)
+| Pulse  | PUL+            | GPIO23 | 16 |
+| Dir    | DIR+            | GPIO24 | 18 |
