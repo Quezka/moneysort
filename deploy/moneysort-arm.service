@@ -1,0 +1,15 @@
+[Unit]
+Description=Money Sorter arm daemon + dashboard (armd)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=money-sorter
+WorkingDirectory=/home/money-sorter/projects/moneysort
+ExecStart=/usr/bin/python3 /home/money-sorter/projects/moneysort/armd.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
