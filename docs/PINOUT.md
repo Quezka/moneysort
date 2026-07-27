@@ -60,3 +60,20 @@ cruise. These live in `arm.py` `JOINTS`.
   position resets to 0 at daemon start, so there's no overtravel protection until
   homing lands.
 - A comfortable cruise speed for all three axes is **20000 pps** (the default).
+
+## Home / limit switches (planned — not wired yet)
+
+Normally-closed switches wired **between the GPIO and GND**, using the Pi's
+internal pull-up. NC is fail-safe: a disconnected/broken switch reads as
+triggered and stops motion.
+
+| Axis | Joint | GPIO | Header pin | Toward home | Reading |
+|------|-------|------|-----------|-------------|---------|
+| **y** | shoulder | GPIO8 | 24 | **negative** steps | not-home = LOW, at-home = HIGH |
+| **x** | elbow | GPIO7 | 26 | **positive** steps *(unverified)* | not-home = LOW, at-home = HIGH |
+
+- `z` (base) has no switch — continuous rotation.
+- Homing routine (to build once switches are attached): jog slowly toward the
+  switch until it reads HIGH, then set that point as position 0; a search-limit
+  abort guards a wrong `home_dir` or dead switch.
+- **x's home direction is unverified** — test with a hand on the e-stop.

@@ -25,11 +25,17 @@ STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.jso
 #   steps_per_rev : measured steps for a full 360 deg output turn (folds in
 #                   microstepping + gearing) -- makes move_degrees() accurate
 #   travel        : usable range in steps for a limited joint (home switch)
-#   homed         : has a home/limit switch (homing itself is TODO)
+#   home_pin      : BCM gpio of the home/limit switch (NC to GND, internal pull-up)
+#   home_dir      : sign of the step direction that moves TOWARD the switch
+# Home switches are normally-closed: not-home = LOW, at-home / broken wire = HIGH
+# (fail-safe -- a disconnected switch reads as triggered and stops motion).
+# NOTE: switches are NOT wired yet -- home_pin/home_dir are the planned layout;
+# claiming them and the find_home routine land once they're physically attached.
 JOINTS = {
-    "x": {"step": 5,  "dir": 6,  "invert": False},                            # elbow (uncalibrated)
-    "y": {"step": 17, "dir": 27, "invert": False,
-          "travel": 33000, "homed": True},                                    # shoulder: ~33k-step range, home switch at start
+    "x": {"step": 5,  "dir": 6,  "invert": False,
+          "home_pin": 7, "home_dir": 1},                                      # elbow: home toward +steps (UNVERIFIED)
+    "y": {"step": 17, "dir": 27, "invert": False, "travel": 33000,
+          "home_pin": 8, "home_dir": -1},                                     # shoulder: ~33k travel, home toward -steps
     "z": {"step": 23, "dir": 24, "invert": False, "steps_per_rev": 157005},   # base: measured via full rev, 360 deg = 157005 steps (90 deg = 39251)
 }
 
