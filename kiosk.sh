@@ -17,5 +17,6 @@ done
 exec chromium \
     --kiosk --app=http://localhost:8080 \
     --ozone-platform=wayland \
+    --password-store=basic \
     --noerrdialogs --disable-infobars --incognito \
     --disable-features=Translate --check-for-update-interval=31536000
