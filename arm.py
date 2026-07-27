@@ -71,9 +71,9 @@ class Arm:
     def disable(self):
         """Release all drivers (motors go free).
 
-        Caveat: this drives one 3.3V pin into ~3 ENA optos in parallel, which is
-        current-marginal at 3.3V -- confirm the motors actually release before
-        depending on it. Also: a gravity-loaded joint will sag when disabled.
+        Verified working: driving GPIO26 high triggers all three ENA optos even
+        at 3.3V into 3 parallel loads (motors go slack), so no buffer/transistor
+        is needed. Note: a gravity-loaded joint will sag when disabled.
         """
         lgpio.gpio_write(self.h, self.enable_pin, 1)
         self._enabled = False
