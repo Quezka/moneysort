@@ -82,6 +82,9 @@ class ArmController:
         self.arm.enable()
         self.estopped = False
 
+    def zero(self):
+        self.arm.zero()
+
     def status(self):
         return {
             "joints": self.arm.angles(),
@@ -147,6 +150,8 @@ def make_handler(ctrl):
                     ctrl.disable()
                 elif self.path.startswith("/enable"):
                     ctrl.enable()
+                elif self.path.startswith("/zero"):
+                    ctrl.zero()
                 elif self.path.startswith("/move"):
                     b = self._body()
                     if isinstance(b.get("moves"), dict):

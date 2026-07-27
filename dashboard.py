@@ -218,6 +218,7 @@ PAGE = """<!doctype html><html lang="en"><head>
   <div class="controls">
     <button id="estop" class="estop">&#9940; EMERGENCY DISABLE</button>
     <button id="reenable" class="reenable" style="display:none">Re-enable motors</button>
+    <button id="zero" class="sys">&#9678; Zero position</button>
     <span class="spacer"></span>
     <button id="desktop" class="sys">&#128421; Desktop</button>
     <button id="reboot" class="sys">&#8635; Reboot</button>
@@ -270,6 +271,7 @@ async function tick() {
 async function post(path) { try { await fetch(path, { method: "POST" }); } catch {} }
 document.getElementById("estop").onclick = () => post("/disable").then(tick);
 document.getElementById("reenable").onclick = () => post("/enable").then(tick);
+document.getElementById("zero").onclick = () => { if (confirm("Set current position as zero?")) post("/zero").then(tick); };
 document.getElementById("desktop").onclick = () => post("/kiosk-exit");
 document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?")) post("/reboot"); };
 document.getElementById("poweroff").onclick = () => { if (confirm("Power OFF the Pi?")) post("/poweroff"); };

@@ -160,6 +160,13 @@ class Arm:
         finally:
             self._write_state(moving=False)
 
+    def zero(self, axis=None):
+        """Define the current position as 0 (manual home). One axis or all."""
+        motors = [self.motors[axis]] if axis else self.motors.values()
+        for m in motors:
+            m.position = 0
+        self._write_state()
+
     def angles(self):
         return {name: round(m.angle, 1) for name, m in self.motors.items()}
 
