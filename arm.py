@@ -29,7 +29,7 @@ JOINTS = {
 # Active-low logic: pin LOW = ENA opto off = drivers ENABLED (motors hold);
 # pin HIGH = disabled. Owned by the Arm (not the Steppers) because lgpio can't
 # let three Steppers each claim the same pin.
-ENABLE_PIN = 22
+ENABLE_PIN = 26   # BCM GPIO26 = header pin 37
 
 
 class Arm:
