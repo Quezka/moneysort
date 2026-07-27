@@ -83,7 +83,7 @@ class Stepper:
         if steps == 0:
             return
         max_pps = max_pps or self.max_pps
-        direction = 1 if steps > 0 else 0
+        direction = 1 if steps < 0 else 0
         lgpio.gpio_write(self.h, self.dir_pin, direction ^ int(self.invert_dir))
         time.sleep(0.001)                     # DIR setup time
 
