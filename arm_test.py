@@ -1,31 +1,47 @@
 #!/usr/bin/env python3
-"""Jog one axis by asking the arm daemon (armd) over HTTP.
+"""Jog the arm via the daemon (armd) over HTTP. The daemon owns the GPIO.
 
-The daemon owns the GPIO, so this is now a thin client -- it does NOT touch
-hardware directly. armd must be running (systemd service, or `python3 armd.py`).
-
-Usage (run on the Pi):
+Single axis:
     python3 arm_test.py <x|y|z> [steps] [pps]
-        steps : signed step count (+ / - sets direction), default 800
-        pps   : cruise pulses per second, default 4000
+
+Multiple axes AT ONCE (any arg containing ':'):
+    python3 arm_test.py x:400 y:-800 z:1200 [pps]
+
+    steps : signed step count (+ / - sets direction), default 800
+    pps   : cruise pulses per second, default 20000
 """
 import json
 import sys
+import urllib.error
 import urllib.request
 
-axis = sys.argv[1] if len(sys.argv) > 1 else "y"
-steps = int(sys.argv[2]) if len(sys.argv) > 2 else 800
-pps = int(sys.argv[3]) if len(sys.argv) > 3 else 4000
+args = sys.argv[1:]
 
-payload = json.dumps({"axis": axis, "steps": steps, "pps": pps}).encode()
+if args and ":" in args[0]:
+    # multi-axis: trailing bare number (no ':') is the shared pps
+    pps = 20000
+    if len(args) > 1 and ":" not in args[-1]:
+        pps = int(args.pop())
+    moves = {}
+    for a in args:
+        ax, st = a.split(":")
+        moves[ax] = int(st)
+    payload = {"moves": moves, "pps": pps}
+    desc = f"move_many {moves} @ {pps}"
+else:
+    axis = args[0] if args else "y"
+    steps = int(args[1]) if len(args) > 1 else 800
+    pps = int(args[2]) if len(args) > 2 else 20000
+    payload = {"axis": axis, "steps": steps, "pps": pps}
+    desc = f"move {axis} {steps} @ {pps}"
+
 req = urllib.request.Request(
-    "http://localhost:8080/move", data=payload,
+    "http://localhost:8080/move", data=json.dumps(payload).encode(),
     headers={"Content-Type": "application/json"}, method="POST",
 )
-print(f"POST /move axis={axis} steps={steps} pps={pps} ...")
+print("POST /move:", desc, "...")
 try:
-    resp = json.load(urllib.request.urlopen(req, timeout=60))
-    print("result:", resp)
+    print("result:", json.load(urllib.request.urlopen(req, timeout=120)))
 except urllib.error.HTTPError as e:
     print("rejected:", e.read().decode())
 except Exception as e:

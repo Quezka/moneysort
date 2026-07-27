@@ -59,6 +59,12 @@ class ArmController:
             raise KeyError(f"unknown axis {axis!r}")
         self._run(lambda: self.arm.move(axis, int(steps), max_pps=pps))
 
+    def move_many(self, moves, pps=None):
+        moves = {a: int(s) for a, s in moves.items() if a in self.arm.motors}
+        if not moves:
+            raise KeyError("no known axes in move")
+        self._run(lambda: self.arm.move_many(moves, max_pps=pps))
+
     def home(self, pps=None):
         self._run(lambda: self.arm.home_all(max_pps=pps))
 
@@ -143,7 +149,10 @@ def make_handler(ctrl):
                     ctrl.enable()
                 elif self.path.startswith("/move"):
                     b = self._body()
-                    ctrl.move(b.get("axis"), b.get("steps", 0), b.get("pps"))
+                    if isinstance(b.get("moves"), dict):
+                        ctrl.move_many(b["moves"], b.get("pps"))
+                    else:
+                        ctrl.move(b.get("axis"), b.get("steps", 0), b.get("pps"))
                 elif self.path.startswith("/home"):
                     ctrl.home(self._body().get("pps"))
                 elif self.path.startswith("/kiosk-exit"):

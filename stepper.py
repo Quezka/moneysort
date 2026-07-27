@@ -24,7 +24,7 @@ TX_PWM = 0  # lgpio kind selector for tx_busy / tx_room
 class Stepper:
     def __init__(self, handle, step_pin, dir_pin, en_pin=None,
                  steps_per_rev=200, microsteps=1, invert_dir=False,
-                 min_pps=400, max_pps=4000, accel_steps=800):
+                 min_pps=400, max_pps=20000, accel_steps=800):
         """
         handle        : open gpiochip handle (lgpio.gpiochip_open(0))
         step_pin      : BCM gpio wired to PUL+
@@ -55,7 +55,7 @@ class Stepper:
 
     # --- internals --------------------------------------------------------
     def _burst(self, pps, cycles):
-        """Queue one constant-rate burst of `cycles` pulses at `pps`."""
+        """Queue one constant-rate burst of `cycles` pulses at `pps` (blocking)."""
         if cycles <= 0:
             return
         half = max(int(round(1_000_000 / pps / 2)), 1)   # microseconds, >=1
@@ -63,39 +63,69 @@ class Stepper:
             time.sleep(0.001)                            # wait for queue space
         lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
 
-    def _ramp(self, ramp_steps, max_pps, up, k=16):
-        """Split a ramp into k bursts of rising (up) or falling speed."""
+    def _ramp_segs(self, ramp_steps, max_pps, up, k=16):
+        """Return [(pps, cycles), ...] for a rising (up) or falling ramp."""
+        segs = []
         if ramp_steps <= 0:
-            return
+            return segs
         base, rem = divmod(ramp_steps, k)
         for i in range(k):
             cyc = base + (1 if i < rem else 0)
+            if cyc <= 0:
+                continue
             frac = (i + 1) / k
             if up:
                 pps = self.min_pps + (max_pps - self.min_pps) * frac
             else:
                 pps = max_pps - (max_pps - self.min_pps) * frac
-            self._burst(max(pps, self.min_pps), cyc)
+            segs.append((max(pps, self.min_pps), cyc))
+        return segs
 
-    # --- public API -------------------------------------------------------
-    def move(self, steps, max_pps=None):
-        """Move a signed number of steps (+/-) with a trapezoidal ramp."""
-        if steps == 0:
-            return
+    def plan(self, steps, max_pps=None):
+        """Build a move: returns (dir_level, [(pps, cycles), ...]).
+
+        Shared by move() and Arm.move_many(); the latter interleaves several
+        steppers' segment lists to drive multiple axes at once.
+        """
         max_pps = max_pps or self.max_pps
         direction = 1 if steps < 0 else 0
-        lgpio.gpio_write(self.h, self.dir_pin, direction ^ int(self.invert_dir))
-        time.sleep(0.001)                     # DIR setup time
-
+        level = direction ^ int(self.invert_dir)
         n = abs(steps)
         ramp = min(self.accel_steps, n // 2)
         cruise = n - 2 * ramp
+        segs = self._ramp_segs(ramp, max_pps, up=True)
+        if cruise > 0:
+            segs.append((max_pps, cruise))
+        segs += self._ramp_segs(ramp, max_pps, up=False)
+        return level, segs
 
-        self._ramp(ramp, max_pps, up=True)    # accelerate
-        self._burst(max_pps, cruise)          # cruise
-        self._ramp(ramp, max_pps, up=False)   # decelerate
+    def set_dir(self, level):
+        lgpio.gpio_write(self.h, self.dir_pin, level)
 
-        while lgpio.tx_busy(self.h, self.step_pin, TX_PWM):
+    def try_queue(self, pps, cycles):
+        """Non-blocking: queue one burst if the tx queue has room, else False."""
+        if cycles <= 0:
+            return True
+        if lgpio.tx_room(self.h, self.step_pin, TX_PWM) < 1:
+            return False
+        half = max(int(round(1_000_000 / pps / 2)), 1)
+        lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
+        return True
+
+    def busy(self):
+        return lgpio.tx_busy(self.h, self.step_pin, TX_PWM)
+
+    # --- public API -------------------------------------------------------
+    def move(self, steps, max_pps=None):
+        """Move a signed number of steps (+/-) with a trapezoidal ramp (blocking)."""
+        if steps == 0:
+            return
+        level, segs = self.plan(steps, max_pps)
+        self.set_dir(level)
+        time.sleep(0.001)                     # DIR setup time
+        for pps, cyc in segs:
+            self._burst(pps, cyc)
+        while self.busy():
             time.sleep(0.005)                 # block until the train finishes
         self.position += steps
 

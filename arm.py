@@ -11,6 +11,7 @@ If a joint runs the wrong way, set invert=True for it in JOINTS.
 """
 import json
 import os
+import time
 
 import lgpio
 from stepper import Stepper
@@ -69,12 +70,7 @@ class Arm:
         self._write_state()
 
     def disable(self):
-        """Release all drivers (motors go free).
-
-        Verified working: driving GPIO26 high triggers all three ENA optos even
-        at 3.3V into 3 parallel loads (motors go slack), so no buffer/transistor
-        is needed. Note: a gravity-loaded joint will sag when disabled.
-        """
+        """Release all drivers (motors go free)."""
         lgpio.gpio_write(self.h, self.enable_pin, 1)
         self._enabled = False
         self._write_state()
@@ -106,6 +102,48 @@ class Arm:
         try:
             for m in self.motors.values():
                 m.go_home(max_pps=max_pps)
+        finally:
+            self._write_state(moving=False)
+
+    def move_many(self, moves, max_pps=None):
+        """Move several axes at once. moves = {axis: steps}.
+
+        Each STEP pin has its own lgpio tx queue that plays independently, so we
+        set every axis's direction, then interleave-feed their trapezoid bursts
+        (round-robin as each queue frees room) -- all axes ramp and run together.
+        """
+        plans = {}
+        for name, steps in moves.items():
+            steps = int(steps)
+            if steps == 0:
+                continue
+            m = self.motors[name]
+            level, segs = m.plan(steps, max_pps)
+            m.set_dir(level)
+            plans[name] = [m, list(segs), steps]
+        if not plans:
+            return
+        time.sleep(0.001)                      # DIR setup for all axes
+
+        self._write_state(moving=True)
+        try:
+            pending = {name: p[1] for name, p in plans.items()}
+            while pending:
+                progressed = False
+                for name in list(pending):
+                    segs = pending[name]
+                    if plans[name][0].try_queue(*segs[0]):
+                        segs.pop(0)
+                        progressed = True
+                        if not segs:
+                            del pending[name]
+                if not progressed:
+                    time.sleep(0.001)          # all queues full; let them drain
+            for m, _, _ in plans.values():     # wait for every train to finish
+                while m.busy():
+                    time.sleep(0.005)
+            for m, _, steps in plans.values():
+                m.position += steps
         finally:
             self._write_state(moving=False)
 
