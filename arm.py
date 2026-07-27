@@ -186,38 +186,38 @@ class Arm:
             return False
         return lgpio.gpio_read(self.h, pin) == 1
 
-    def find_home(self, axis, fast_pps=1000, slow_pps=400, coarse=100, fine=10):
-        """Seek the home switch, then define that point as position 0.
+    def find_home(self, axis, fast_pps=15000, slow_pps=500,
+                  backoff=800, fine=8, timeout=30):
+        """Seek the home switch and define that point as position 0.
 
-        Two-stage: coarse approach toward the switch, back off until it
-        releases, then a slow fine approach. Every phase aborts if it travels
-        past ~1.3x the axis's known range (guards a wrong home_dir or a switch
-        stuck HIGH, e.g. a broken/disconnected wire).
+        Fast approach to first touch -> back off until released (+ clearance)
+        -> slow fine approach to the final touch. The fast phase aborts if it
+        runs `timeout` seconds without triggering (guards a wrong home_dir or a
+        stuck/broken switch).
         """
         c = self.cfg[axis]
         if axis not in self.home_pins:
             raise ValueError(f"axis {axis!r} has no home switch")
         m = self.motors[axis]
         hd = 1 if c.get("home_dir", -1) >= 0 else -1     # +/-1 toward the switch
-        limit = int(c.get("travel", 40000) * 1.3) + 2 * coarse
-
-        def seek(direction, want_home, step, pps):
-            travelled = 0
-            while self.at_home(axis) != want_home:
-                if travelled >= limit:
-                    raise RuntimeError(
-                        f"{axis!r} home not found within {limit} steps "
-                        f"(check home_dir / switch wiring)")
-                m.jog(direction * step, pps)
-                travelled += step
+        home = lambda: self.at_home(axis)
 
         self._write_state(moving=True)
         try:
-            if self.at_home(axis):                 # start on switch -> back off
-                seek(-hd, False, fine, slow_pps)
-            seek(hd, True, coarse, fast_pps)       # coarse approach
-            seek(-hd, False, fine, slow_pps)       # back off until released
-            seek(hd, True, fine, slow_pps)         # slow fine approach
+            # 1. fast approach to first touch (skip if already on the switch)
+            if not home():
+                m.home_seek(hd, fast_pps, home, timeout=timeout)
+                if not home():
+                    raise RuntimeError(
+                        f"{axis!r} home not found in {timeout}s "
+                        f"(check home_dir / switch wiring)")
+            # 2. back off until released, plus a little clearance
+            while home():
+                m.jog(-hd * fine, slow_pps)
+            m.jog(-hd * backoff, slow_pps)
+            # 3. slow fine approach to the final touch -> that point is zero
+            while not home():
+                m.jog(hd * fine, slow_pps)
             m.position = 0
         finally:
             self._write_state(moving=False)

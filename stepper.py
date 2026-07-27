@@ -147,6 +147,44 @@ class Stepper:
             time.sleep(0.005)
         self.position += steps
 
+    def home_seek(self, direction, pps, stop_fn, accel_steps=400,
+                  poll=0.0005, timeout=30):
+        """Ramp up toward `direction` and run until stop_fn() is True or timeout.
+
+        For the fast phase of homing: ramps to `pps` (no stall), cruises
+        indefinitely while polling stop_fn(), then halts promptly on contact.
+        Position is NOT tracked here -- the caller re-zeroes at the switch.
+        """
+        level = (1 if direction < 0 else 0) ^ int(self.invert_dir)
+        self.set_dir(level)
+        time.sleep(0.001)
+        start = time.monotonic()
+        stopped = False
+
+        # queue ramp-up bursts then one infinite cruise burst (cyc=0),
+        # polling for queue room + trigger so we can bail during the ramp too
+        for p, cyc in self._ramp_segs(accel_steps, pps, up=True) + [(pps, 0)]:
+            while lgpio.tx_room(self.h, self.step_pin, TX_PWM) < 1:
+                if stop_fn() or time.monotonic() - start > timeout:
+                    stopped = True
+                    break
+                time.sleep(poll)
+            if stopped:
+                break
+            ph = max(int(round(1_000_000 / p / 2)), 1)
+            lgpio.tx_pulse(self.h, self.step_pin, ph, ph, 0, cyc)
+
+        while not stopped:                       # cruise: poll until trigger
+            if stop_fn() or time.monotonic() - start > timeout:
+                break
+            time.sleep(poll)
+
+        # halt: replace the (infinite) train with a single final cycle
+        half = max(int(round(1_000_000 / pps / 2)), 1)
+        lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, 1)
+        while self.busy():
+            time.sleep(0.001)
+
     @property
     def angle(self):
         return self.position / self.eff_spr * 360.0
