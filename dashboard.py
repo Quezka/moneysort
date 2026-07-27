@@ -15,11 +15,13 @@ until then the arm tiles show "no data" gracefully.
 import json
 import os
 import socket
+import subprocess
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 8080
 STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
+ENABLE_PIN = 26   # shared driver enable (active-low): LOW = enabled, HIGH = disabled
 
 
 # --- metric collection ------------------------------------------------------
@@ -103,6 +105,42 @@ def arm_state():
         return None
 
 
+def motors_enabled():
+    """Real level of the shared enable pin (active-low): True if motors are on."""
+    try:
+        out = subprocess.run(["pinctrl", "get", str(ENABLE_PIN)],
+                             capture_output=True, text=True, timeout=1).stdout
+        seg = out.split("|")
+        if len(seg) >= 2:
+            return seg[1].strip().split()[0] == "lo"   # low = enabled
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def set_enable(enable):
+    """Drive the shared enable pin. True -> motors enabled; False -> disabled."""
+    level = "dl" if enable else "dh"
+    try:
+        subprocess.run(["pinctrl", "set", str(ENABLE_PIN), "op", level],
+                       timeout=2, check=True)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def system_action(action):
+    """Reboot or power off the Pi (needs passwordless sudo)."""
+    cmd = {"reboot": ["sudo", "reboot"], "poweroff": ["sudo", "poweroff"]}.get(action)
+    if not cmd:
+        return False
+    try:
+        subprocess.Popen(cmd)   # fire-and-forget; the box goes down under us
+        return True
+    except OSError:
+        return False
+
+
 def snapshot():
     mem_used, mem_total = mem_pct()
     disk_used, disk_total = disk_pct()
@@ -114,6 +152,7 @@ def snapshot():
         "mem_pct": mem_used, "mem_total": mem_total,
         "disk_pct": disk_used, "disk_total": disk_total,
         "uptime": uptime_str(),
+        "motors_enabled": motors_enabled(),
         "arm": arm_state(),
         "time": time.strftime("%H:%M:%S"),
     }
@@ -146,6 +185,16 @@ PAGE = """<!doctype html><html lang="en"><head>
   .joints { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
   .joint .value { font-size: 42px; }
   .moving { color: #58a6ff; } .idle { color: #6e7681; }
+  .controls { display: flex; align-items: center; gap: 14px; margin-top: 22px; }
+  .spacer { flex: 1; }
+  button { font-family: inherit; font-weight: 700; border: none; border-radius: 12px;
+           cursor: pointer; color: #fff; -webkit-tap-highlight-color: transparent; }
+  button:active { transform: translateY(3px); box-shadow: none !important; }
+  .estop { background: #da3633; font-size: 22px; letter-spacing: 1px; padding: 20px 34px; box-shadow: 0 4px 0 #a5201d; }
+  .estop.off { background: #3d1d1d; color: #f85149; box-shadow: 0 4px 0 #2a1414; }
+  .reenable { background: #238636; font-size: 16px; padding: 16px 22px; box-shadow: 0 4px 0 #196c2b; }
+  .sys { background: #30363d; font-size: 16px; padding: 16px 22px; box-shadow: 0 4px 0 #21262d; }
+  .sys.danger { background: #6e2b2b; box-shadow: 0 4px 0 #4a1d1d; }
 </style></head><body>
   <header>
     <h1>Money<span>Sorter</span></h1>
@@ -156,6 +205,14 @@ PAGE = """<!doctype html><html lang="en"><head>
 
   <div class="section"><span class="dot" id="armdot"></span>Robot Arm <span id="armstate" class="idle" style="font-size:13px"></span></div>
   <div class="joints" id="joints"></div>
+
+  <div class="controls">
+    <button id="estop" class="estop">&#9940; EMERGENCY DISABLE</button>
+    <button id="reenable" class="reenable" style="display:none">Re-enable motors</button>
+    <span class="spacer"></span>
+    <button id="reboot" class="sys">&#8635; Reboot</button>
+    <button id="poweroff" class="sys danger">&#9099; Power off</button>
+  </div>
 
 <script>
 const cls = (v, warn, bad) => v == null ? "" : v >= bad ? "bad" : v >= warn ? "warn" : "ok";
@@ -194,7 +251,17 @@ async function tick() {
       `<div class="card joint"><div class="label">${n}</div><div class="value idle">&mdash;<span class="unit">&deg;</span></div></div>`
     ).join("");
   }
+
+  const en = d.motors_enabled, estop = document.getElementById("estop"), reen = document.getElementById("reenable");
+  if (en === false) { estop.textContent = "MOTORS DISABLED"; estop.classList.add("off"); reen.style.display = ""; }
+  else if (en === true) { estop.innerHTML = "&#9940; EMERGENCY DISABLE"; estop.classList.remove("off"); reen.style.display = "none"; }
 }
+
+async function post(path) { try { await fetch(path, { method: "POST" }); } catch {} }
+document.getElementById("estop").onclick = () => post("/disable").then(tick);
+document.getElementById("reenable").onclick = () => post("/enable").then(tick);
+document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?")) post("/reboot"); };
+document.getElementById("poweroff").onclick = () => { if (confirm("Power OFF the Pi?")) post("/poweroff"); };
 tick(); setInterval(tick, 1500);
 </script></body></html>"""
 
@@ -216,6 +283,22 @@ class Handler(BaseHTTPRequestHandler):
             self._send(json.dumps(snapshot()), "application/json")
         else:
             self._send(PAGE, "text/html; charset=utf-8")
+
+    def do_POST(self):
+        actions = {
+            "/disable":  lambda: set_enable(False),   # emergency: cut motor torque
+            "/enable":   lambda: set_enable(True),
+            "/reboot":   lambda: system_action("reboot"),
+            "/poweroff": lambda: system_action("poweroff"),
+        }
+        fn = next((f for p, f in actions.items() if self.path.startswith(p)), None)
+        if fn is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        ok = fn()
+        self._send(json.dumps({"ok": ok, "motors_enabled": motors_enabled()}),
+                   "application/json")
 
 
 def main():
