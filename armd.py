@@ -85,12 +85,16 @@ class ArmController:
     def zero(self):
         self.arm.zero()
 
+    def find_home(self, axis):
+        self._run(lambda: self.arm.find_home(axis))
+
     def status(self):
         return {
             "joints": self.arm.angles(),
             "moving": self.moving,
             "enabled": self.arm.enabled,
             "estopped": self.estopped,
+            "home": {ax: self.arm.at_home(ax) for ax in self.arm.home_pins},
         }
 
     def close(self):
@@ -158,6 +162,8 @@ def make_handler(ctrl):
                         ctrl.move_many(b["moves"], b.get("pps"))
                     else:
                         ctrl.move(b.get("axis"), b.get("steps", 0), b.get("pps"))
+                elif self.path.startswith("/find_home"):
+                    ctrl.find_home(self._body().get("axis"))
                 elif self.path.startswith("/home"):
                     ctrl.home(self._body().get("pps"))
                 elif self.path.startswith("/kiosk-exit"):

@@ -219,6 +219,7 @@ PAGE = """<!doctype html><html lang="en"><head>
     <button id="estop" class="estop">&#9940; EMERGENCY DISABLE</button>
     <button id="reenable" class="reenable" style="display:none">Re-enable motors</button>
     <button id="zero" class="sys">&#9678; Zero position</button>
+    <button id="homey" class="sys">&#8962; Home Y</button>
     <span class="spacer"></span>
     <button id="desktop" class="sys">&#128421; Desktop</button>
     <button id="reboot" class="sys">&#8635; Reboot</button>
@@ -268,10 +269,19 @@ async function tick() {
   else if (en === true) { estop.innerHTML = "&#9940; EMERGENCY DISABLE"; estop.classList.remove("off"); reen.style.display = "none"; }
 }
 
-async function post(path) { try { await fetch(path, { method: "POST" }); } catch {} }
+async function post(path, body) {
+  try {
+    await fetch(path, {
+      method: "POST",
+      headers: body ? { "Content-Type": "application/json" } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {}
+}
 document.getElementById("estop").onclick = () => post("/disable").then(tick);
 document.getElementById("reenable").onclick = () => post("/enable").then(tick);
 document.getElementById("zero").onclick = () => { if (confirm("Set current position as zero?")) post("/zero").then(tick); };
+document.getElementById("homey").onclick = () => { if (confirm("Home the Y (shoulder) axis? It will seek the switch.")) post("/find_home", {axis: "y"}).then(tick); };
 document.getElementById("desktop").onclick = () => post("/kiosk-exit");
 document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?")) post("/reboot"); };
 document.getElementById("poweroff").onclick = () => { if (confirm("Power OFF the Pi?")) post("/poweroff"); };

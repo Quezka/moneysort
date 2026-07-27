@@ -135,6 +135,18 @@ class Stepper:
     def go_home(self, max_pps=None):
         self.move(-self.position, max_pps=max_pps)
 
+    def jog(self, steps, pps):
+        """Constant-speed move with no accel ramp -- for slow homing chunks."""
+        if steps == 0:
+            return
+        level = (1 if steps < 0 else 0) ^ int(self.invert_dir)
+        self.set_dir(level)
+        time.sleep(0.001)
+        self._burst(pps, abs(steps))
+        while self.busy():
+            time.sleep(0.005)
+        self.position += steps
+
     @property
     def angle(self):
         return self.position / self.eff_spr * 360.0

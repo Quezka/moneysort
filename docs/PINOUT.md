@@ -61,7 +61,9 @@ cruise. These live in `arm.py` `JOINTS`.
   homing lands.
 - A comfortable cruise speed for all three axes is **20000 pps** (the default).
 
-## Home / limit switches (planned — not wired yet)
+## Home / limit switches
+
+**y is wired; x is not yet.**
 
 Normally-closed switches wired **between the GPIO and GND**, using the Pi's
 internal pull-up. NC is fail-safe: a disconnected/broken switch reads as
@@ -69,11 +71,13 @@ triggered and stops motion.
 
 | Axis | Joint | GPIO | Header pin | Toward home | Reading |
 |------|-------|------|-----------|-------------|---------|
-| **y** | shoulder | GPIO8 | 24 | **negative** steps | not-home = LOW, at-home = HIGH |
-| **x** | elbow | GPIO7 | 26 | **positive** steps *(unverified)* | not-home = LOW, at-home = HIGH |
+| **y** | shoulder | GPIO8 | 24 | **negative** steps | not-home = LOW, at-home = HIGH | wired ✓ |
+| **x** | elbow | GPIO7 | 26 | **positive** steps *(unverified)* | not-home = LOW, at-home = HIGH | not wired |
 
 - `z` (base) has no switch — continuous rotation.
-- Homing routine (to build once switches are attached): jog slowly toward the
-  switch until it reads HIGH, then set that point as position 0; a search-limit
-  abort guards a wrong `home_dir` or dead switch.
-- **x's home direction is unverified** — test with a hand on the e-stop.
+- **Homing** (`find_home`): coarse jog toward the switch until HIGH, back off
+  until released, slow fine approach, then set position 0. Aborts if it travels
+  past ~1.3× the axis range (guards a wrong `home_dir` or a stuck/broken switch).
+  Trigger via the dashboard **⌂ Home Y** button or `arm_test.py home y`.
+- **x's home direction is unverified** and its switch isn't wired — do not home
+  x until it's connected and checked, hand on the e-stop.

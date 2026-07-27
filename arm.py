@@ -29,8 +29,8 @@ STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.jso
 #   home_dir      : sign of the step direction that moves TOWARD the switch
 # Home switches are normally-closed: not-home = LOW, at-home / broken wire = HIGH
 # (fail-safe -- a disconnected switch reads as triggered and stops motion).
-# NOTE: switches are NOT wired yet -- home_pin/home_dir are the planned layout;
-# claiming them and the find_home routine land once they're physically attached.
+# NOTE: y switch is wired (find_home works for y); x switch is not wired yet
+# and its home_dir is unverified -- do not home x until it's connected + checked.
 JOINTS = {
     "x": {"step": 5,  "dir": 6,  "invert": False,
           "home_pin": 7, "home_dir": 1},                                      # elbow: home toward +steps (UNVERIFIED)
@@ -63,6 +63,12 @@ class Arm:
             self.motors[name] = Stepper(
                 self.h, c["step"], c["dir"],
                 invert_dir=c.get("invert", False), **kw)
+        # Claim home-switch pins as pull-up inputs (NC to GND).
+        self.home_pins = {}
+        for name, c in joints.items():
+            if "home_pin" in c:
+                lgpio.gpio_claim_input(self.h, c["home_pin"], lgpio.SET_PULL_UP)
+                self.home_pins[name] = c["home_pin"]
         self._write_state()
 
     # --- dashboard state --------------------------------------------------
@@ -173,12 +179,57 @@ class Arm:
             m.position = 0
         self._write_state()
 
+    def at_home(self, axis):
+        """True if the axis's home switch is actuated (NC open = HIGH)."""
+        pin = self.home_pins.get(axis)
+        if pin is None:
+            return False
+        return lgpio.gpio_read(self.h, pin) == 1
+
+    def find_home(self, axis, fast_pps=1000, slow_pps=400, coarse=100, fine=10):
+        """Seek the home switch, then define that point as position 0.
+
+        Two-stage: coarse approach toward the switch, back off until it
+        releases, then a slow fine approach. Every phase aborts if it travels
+        past ~1.3x the axis's known range (guards a wrong home_dir or a switch
+        stuck HIGH, e.g. a broken/disconnected wire).
+        """
+        c = self.cfg[axis]
+        if axis not in self.home_pins:
+            raise ValueError(f"axis {axis!r} has no home switch")
+        m = self.motors[axis]
+        hd = 1 if c.get("home_dir", -1) >= 0 else -1     # +/-1 toward the switch
+        limit = int(c.get("travel", 40000) * 1.3) + 2 * coarse
+
+        def seek(direction, want_home, step, pps):
+            travelled = 0
+            while self.at_home(axis) != want_home:
+                if travelled >= limit:
+                    raise RuntimeError(
+                        f"{axis!r} home not found within {limit} steps "
+                        f"(check home_dir / switch wiring)")
+                m.jog(direction * step, pps)
+                travelled += step
+
+        self._write_state(moving=True)
+        try:
+            if self.at_home(axis):                 # start on switch -> back off
+                seek(-hd, False, fine, slow_pps)
+            seek(hd, True, coarse, fast_pps)       # coarse approach
+            seek(-hd, False, fine, slow_pps)       # back off until released
+            seek(hd, True, fine, slow_pps)         # slow fine approach
+            m.position = 0
+        finally:
+            self._write_state(moving=False)
+
     def angles(self):
         return {name: round(m.angle, 1) for name, m in self.motors.items()}
 
     def close(self):
         for m in self.motors.values():
             m.close()
+        for pin in self.home_pins.values():
+            lgpio.gpio_free(self.h, pin)
         lgpio.gpio_free(self.h, self.enable_pin)
         lgpio.gpiochip_close(self.h)
 
