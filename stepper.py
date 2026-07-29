@@ -149,7 +149,7 @@ class Stepper:
 
     def home_seek(self, direction, pps, stop_fn, accel_steps=400,
                   poll=0.0005):
-        """Ramp up toward `direction` and run until stop_fn() is True or timeout.
+        """Ramp up toward `direction` and run until stop_fn() is True.
 
         For the fast phase of homing: ramps to `pps` (no stall), cruises
         indefinitely while polling stop_fn(), then halts promptly on contact.
@@ -158,6 +158,7 @@ class Stepper:
         level = (1 if direction < 0 else 0) ^ int(self.invert_dir)
         self.set_dir(level)
         time.sleep(0.001)
+        start = time.monotonic()
         stopped = False
 
         # queue ramp-up bursts then one infinite cruise burst (cyc=0),
@@ -171,6 +172,8 @@ class Stepper:
             lgpio.tx_pulse(self.h, self.step_pin, ph, ph, 0, cyc)
 
         while not stopped:                       # cruise: poll until trigger
+            if stop_fn():
+                break
             time.sleep(poll)
 
         # halt: replace the (infinite) train with a single final cycle

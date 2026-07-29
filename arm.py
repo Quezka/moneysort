@@ -206,9 +206,7 @@ class Arm:
         """Seek the home switch and define that point as position 0.
 
         Fast approach to first touch -> back off until released (+ clearance)
-        -> slow fine approach to the final touch. The fast phase aborts if it
-        runs `timeout` seconds without triggering (guards a wrong home_dir or a
-        stuck/broken switch).
+        -> slow fine approach to the final touch.
         """
         c = self.cfg[axis]
         if axis not in self.home_pins:
