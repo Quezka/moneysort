@@ -202,7 +202,7 @@ class Arm:
         return lgpio.gpio_read(self.h, pin) == 1
 
     def find_home(self, axis, fast_pps=15000, slow_pps=500,
-                  backoff=800, fine=8, timeout=30):
+                  backoff=800, fine=8):
         """Seek the home switch and define that point as position 0.
 
         Fast approach to first touch -> back off until released (+ clearance)
@@ -221,11 +221,7 @@ class Arm:
         try:
             # 1. fast approach to first touch (skip if already on the switch)
             if not home():
-                m.home_seek(hd, fast_pps, home, timeout=timeout)
-                if not home():
-                    raise RuntimeError(
-                        f"{axis!r} home not found in {timeout}s "
-                        f"(check home_dir / switch wiring)")
+                m.home_seek(hd, fast_pps, home)
             # 2. back off until released, plus a little clearance
             while home():
                 m.jog(-hd * fine, slow_pps)
