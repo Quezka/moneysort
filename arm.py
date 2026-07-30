@@ -151,11 +151,21 @@ class Arm:
         self.move(name, round(degrees / 360.0 * m.eff_spr), max_pps=max_pps)
 
     def home_all(self, max_pps=None):
-        """Return every joint to its start position, one at a time."""
+        """Home the whole arm in one call, one axis at a time.
+
+        Axes with a home switch (x, y) seek it via find_home and re-zero on it;
+        switch-less axes (z/base) just drive back to their existing zero (no-op
+        if already there). Stops early if the e-stop abort fires.
+        """
         self._write_state(moving=True)
         try:
-            for m in self.motors.values():
-                m.go_home(max_pps=max_pps)
+            for name, m in self.motors.items():
+                if self.abort.is_set():
+                    break
+                if name in self.home_pins:
+                    self.find_home(name)
+                else:
+                    m.go_home(max_pps=max_pps)
         finally:
             self._write_state(moving=False)
 

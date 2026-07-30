@@ -14,7 +14,7 @@ over HTTP instead of by claiming GPIO directly:
     GET  /                 -> dashboard page
     GET  /status           -> system + live arm state (JSON)
     POST /move             -> {"axis":"z","steps":800,"pps":4000}
-    POST /home             -> all joints back to 0
+    POST /home             -> home all: x/y seek switches, z returns to zero
     POST /disable          -> LATCHED e-stop (cut torque, refuse moves)
     POST /enable           -> clear e-stop, re-energize
     POST /reboot /poweroff -> system control

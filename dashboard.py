@@ -219,7 +219,7 @@ PAGE = """<!doctype html><html lang="en"><head>
     <button id="estop" class="estop">&#9940; EMERGENCY DISABLE</button>
     <button id="reenable" class="reenable" style="display:none">Re-enable motors</button>
     <button id="zero" class="sys">&#9678; Zero position</button>
-    <button id="homey" class="sys">&#8962; Home Y</button>
+    <button id="home" class="sys">&#8962; Home</button>
     <span class="spacer"></span>
     <button id="desktop" class="sys">&#128421; Desktop</button>
     <button id="reboot" class="sys">&#8635; Reboot</button>
@@ -281,7 +281,7 @@ async function post(path, body) {
 document.getElementById("estop").onclick = () => post("/disable").then(tick);
 document.getElementById("reenable").onclick = () => post("/enable").then(tick);
 document.getElementById("zero").onclick = () => { if (confirm("Set current position as zero?")) post("/zero").then(tick); };
-document.getElementById("homey").onclick = () => { if (confirm("Home the Y (shoulder) axis? It will seek the switch.")) post("/find_home", {axis: "y"}).then(tick); };
+document.getElementById("home").onclick = () => { if (confirm("Home all axes? X and Y seek their switches; Z returns to zero.")) post("/home").then(tick); };
 document.getElementById("desktop").onclick = () => post("/kiosk-exit");
 document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?")) post("/reboot"); };
 document.getElementById("poweroff").onclick = () => { if (confirm("Power OFF the Pi?")) post("/poweroff"); };
