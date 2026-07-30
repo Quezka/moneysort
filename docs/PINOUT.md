@@ -52,7 +52,7 @@ cruise. These live in `arm.py` `JOINTS`.
 |------|-------|-----------|-------|
 | **z** | base | 360° = **157,005 steps** (measured, full rev) → 90° ≈ 39,251 | continuous rotation, no physical limit |
 | **y** | shoulder | **33,000 steps = 90°** → 360° = 132,000 steps/rev | homed; soft-limited to **0..33,000 steps (0..90°)** |
-| **x** | elbow | not calibrated yet | — |
+| **x** | elbow | per-degree not measured yet | homed; soft-limited to **−33,000..0 steps** (home at 0, positive end) |
 
 - `z` has `steps_per_rev = 157005`, so `move_degrees()` is accurate for the base.
 - `y` has `steps_per_rev = 132000` (33k steps = 90°); `move_degrees("y", ...)` works.
@@ -64,7 +64,7 @@ cruise. These live in `arm.py` `JOINTS`.
 
 ## Home / limit switches
 
-**y is wired; x is not yet.**
+**y and x are both wired and homing works for both.**
 
 Normally-closed switches wired **between the GPIO and GND**, using the Pi's
 internal pull-up. NC is fail-safe: a disconnected/broken switch reads as
@@ -73,12 +73,13 @@ triggered and stops motion.
 | Axis | Joint | GPIO | Header pin | Toward home | Reading |
 |------|-------|------|-----------|-------------|---------|
 | **y** | shoulder | GPIO8 | 24 | **negative** steps | not-home = LOW, at-home = HIGH | wired ✓ |
-| **x** | elbow | GPIO7 | 26 | **positive** steps *(unverified)* | not-home = LOW, at-home = HIGH | not wired |
+| **x** | elbow | GPIO7 | 26 | **positive** steps *(verified)* | not-home = LOW, at-home = HIGH | wired ✓ |
 
 - `z` (base) has no switch — continuous rotation.
 - **Homing** (`find_home`): coarse jog toward the switch until HIGH, back off
   until released, slow fine approach, then set position 0. Aborts if it travels
   past ~1.3× the axis range (guards a wrong `home_dir` or a stuck/broken switch).
   Trigger via the dashboard **⌂ Home Y** button or `arm_test.py home y`.
-- **x's home direction is unverified** and its switch isn't wired — do not home
-  x until it's connected and checked, hand on the e-stop.
+- **x homes toward +steps** (verified 2026-07-30); its zero sits right at the
+  switch edge, so `at_home("x")` can flicker LOW at rest — benign. A larger
+  `backoff`/`fine` in `find_home` would seat it more firmly if it matters.

@@ -29,11 +29,12 @@ STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.jso
 #   home_dir      : sign of the step direction that moves TOWARD the switch
 # Home switches are normally-closed: not-home = LOW, at-home / broken wire = HIGH
 # (fail-safe -- a disconnected switch reads as triggered and stops motion).
-# NOTE: y switch is wired (find_home works for y); x switch is not wired yet
-# and its home_dir is unverified -- do not home x until it's connected + checked.
+# NOTE: y and x switches are both wired and find_home works for both
+# (x home_dir=+1 verified 2026-07-30). x rest point sits right at the switch
+# edge, so at_home("x") can flicker LOW at position 0 -- benign.
 JOINTS = {
-    "x": {"step": 5,  "dir": 6,  "invert": False,
-          "home_pin": 7, "home_dir": 1},                                      # elbow: home toward +steps (UNVERIFIED)
+    "x": {"step": 5,  "dir": 6,  "invert": False, "travel": 33000,
+          "home_pin": 7, "home_dir": 1},                                      # elbow: 0..-33000 steps, home (0) toward +steps
     "y": {"step": 17, "dir": 27, "invert": False, "travel": 33000,
           "steps_per_rev": 132000, "home_pin": 8, "home_dir": -1},            # shoulder: 0..33000 steps = 0..90 deg, home (0) toward -steps
     "z": {"step": 23, "dir": 24, "invert": False, "steps_per_rev": 157005},   # base: measured via full rev, 360 deg = 157005 steps (90 deg = 39251)
