@@ -211,19 +211,21 @@ PAGE = """<!doctype html><html lang="en"><head>
   .settings > summary::-webkit-details-marker { display: none; }
   .settings[open] > summary { color: #c9d1d9; }
   .settings .controls { margin-top: 8px; }
-  #toasts { position: fixed; top: 18px; right: 18px; display: flex; flex-direction: column;
-            gap: 10px; z-index: 100; pointer-events: none; }
-  .toast { min-width: 220px; max-width: 380px; background: #161b22; border: 1px solid #21262d;
-           border-left: 4px solid #58a6ff; border-radius: 10px; padding: 13px 16px; color: #c9d1d9;
-           font-size: 15px; font-weight: 600; box-shadow: 0 10px 28px rgba(0,0,0,.45);
-           display: flex; align-items: center; gap: 11px;
-           opacity: 0; transform: translateX(24px); transition: opacity .25s ease, transform .25s ease; }
+  #toasts { position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+            display: flex; flex-direction: column; align-items: center; gap: 12px;
+            z-index: 100; pointer-events: none; width: max-content; max-width: 92vw; }
+  .toast { min-width: 320px; max-width: 620px; background: #1b2230; border: 1px solid #30363d;
+           border-left: 7px solid #58a6ff; border-radius: 13px; padding: 19px 28px; color: #f0f3f6;
+           font-size: 21px; font-weight: 700; letter-spacing: .2px; box-shadow: 0 16px 44px rgba(0,0,0,.6);
+           display: flex; align-items: center; gap: 15px;
+           opacity: 0; transform: translateY(-18px) scale(.95);
+           transition: opacity .22s ease, transform .22s cubic-bezier(.2,.9,.3,1.3); }
   .toast.show { opacity: 1; transform: none; }
-  .toast .ico { font-size: 17px; line-height: 1; }
-  .toast.info    { border-left-color: #58a6ff; } .toast.info    .ico { color: #58a6ff; }
-  .toast.success { border-left-color: #3fb950; } .toast.success .ico { color: #3fb950; }
-  .toast.warn    { border-left-color: #d29922; } .toast.warn    .ico { color: #d29922; }
-  .toast.error   { border-left-color: #f85149; } .toast.error   .ico { color: #f85149; }
+  .toast .ico { font-size: 26px; line-height: 1; }
+  .toast.info    { border-left-color: #58a6ff; background: #172234; } .toast.info    .ico { color: #58a6ff; }
+  .toast.success { border-left-color: #3fb950; background: #15271a; } .toast.success .ico { color: #3fb950; }
+  .toast.warn    { border-left-color: #d29922; background: #2a2413; } .toast.warn    .ico { color: #d29922; }
+  .toast.error   { border-left-color: #f85149; background: #2c1919; } .toast.error   .ico { color: #f85149; }
 </style></head><body>
   <div id="toasts"></div>
   <header>
@@ -264,7 +266,7 @@ const card = (label, value, unit, sub, klass="") =>
 let last = {};                       // most recent /status, for click-time checks
 
 const ICON = { info: "&#8505;", success: "&#10003;", warn: "&#9888;", error: "&#10007;" };
-function toast(msg, type = "info", ttl = 3000) {
+function toast(msg, type = "info", ttl = 3800) {
   const wrap = document.getElementById("toasts");
   const el = document.createElement("div");
   el.className = "toast " + type;
