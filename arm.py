@@ -193,10 +193,8 @@ class Arm:
                             del pending[name]
                 if not progressed:
                     time.sleep(0.001)          # all queues full; let them drain
-            for m, _, _ in plans.values():     # wait for every train to finish
-                while m.busy():
-                    if self.abort.is_set():
-                        m._halt()              # e-stop: cut every axis short
+            for m, _, _ in plans.values():     # drain every queue (bursts are
+                while m.busy():                # short, so an abort clears fast)
                     time.sleep(0.005)
             if not self.abort.is_set():        # positions unknown after an abort
                 for m, _, steps in plans.values():

@@ -21,6 +21,13 @@ import lgpio
 
 TX_PWM = 0  # lgpio kind selector for tx_busy / tx_room
 
+# The cruise is queued as many short bursts instead of one long one. lgpio plays
+# a finite burst to the end no matter what (only an *infinite* burst can be cut
+# short), so a single 20 s cruise would ignore an e-stop until it finished. With
+# ~this-many-seconds bursts, disable() stops the feed and the few already-queued
+# bursts drain in a fraction of a second (torque is already off regardless).
+CRUISE_CHUNK_S = 0.04
+
 
 class Stepper:
     def __init__(self, handle, step_pin, dir_pin, en_pin=None,
@@ -69,18 +76,6 @@ class Stepper:
             time.sleep(0.001)                            # wait for queue space
         lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
 
-    def _halt(self):
-        """Truncate whatever is currently transmitting on the step pin.
-
-        A fresh tx_pulse replaces the in-flight train with a single final cycle
-        (same idiom home_seek uses to stop its infinite seek burst), so a long
-        cruise stops within a pulse instead of playing out to the end.
-        """
-        half = max(int(round(1_000_000 / self.max_pps / 2)), 1)
-        try:
-            lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, 1)
-        except Exception:
-            pass
 
     def _ramp_segs(self, ramp_steps, max_pps, up, k=16):
         """Return [(pps, cycles), ...] for a rising (up) or falling ramp."""
@@ -114,7 +109,11 @@ class Stepper:
         cruise = n - 2 * ramp
         segs = self._ramp_segs(ramp, max_pps, up=True)
         if cruise > 0:
-            segs.append((max_pps, cruise))
+            chunk = max(1, int(max_pps * CRUISE_CHUNK_S))   # bound e-stop latency
+            full, rem = divmod(cruise, chunk)
+            segs.extend([(max_pps, chunk)] * full)
+            if rem:
+                segs.append((max_pps, rem))
         segs += self._ramp_segs(ramp, max_pps, up=False)
         return level, segs
 
@@ -148,13 +147,12 @@ class Stepper:
         self.set_dir(level)
         time.sleep(0.001)                     # DIR setup time
         for pps, cyc in segs:
-            if self.abort.is_set():
+            if self.abort.is_set():           # e-stop: stop queuing new bursts
                 break
             self._burst(pps, cyc)
         while self.busy():
-            if self.abort.is_set():
-                self._halt()                  # cut the in-flight train short
-            time.sleep(0.005)                 # block until the train finishes
+            time.sleep(0.005)                 # drain what's queued (bursts are
+                                              # short, so this is quick on abort)
         if not self.abort.is_set():
             self.position += steps
 
@@ -173,8 +171,6 @@ class Stepper:
         time.sleep(0.001)
         self._burst(pps, abs(steps))
         while self.busy():
-            if self.abort.is_set():
-                self._halt()
             time.sleep(0.005)
         if not self.abort.is_set():
             self.position += steps
