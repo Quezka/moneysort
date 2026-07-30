@@ -35,7 +35,7 @@ STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.jso
 # edge, so at_home("x") can flicker LOW at position 0 -- benign.
 JOINTS = {
     "x": {"step": 5,  "dir": 6,  "invert": False, "travel": 33000,
-          "home_pin": 7, "home_dir": 1},                                      # elbow: 0..-33000 steps, home (0) toward +steps
+          "steps_per_rev": 132000, "home_pin": 7, "home_dir": 1},             # elbow: 0..-33000 steps = 0..-90 deg, home (0) toward +steps
     "y": {"step": 17, "dir": 27, "invert": False, "travel": 33000,
           "steps_per_rev": 132000, "home_pin": 8, "home_dir": -1},            # shoulder: 0..33000 steps = 0..90 deg, home (0) toward -steps
     "z": {"step": 23, "dir": 24, "invert": False, "steps_per_rev": 157005},   # base: measured via full rev, 360 deg = 157005 steps (90 deg = 39251)

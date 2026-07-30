@@ -52,14 +52,15 @@ cruise. These live in `arm.py` `JOINTS`.
 |------|-------|-----------|-------|
 | **z** | base | 360° = **157,005 steps** (measured, full rev) → 90° ≈ 39,251 | continuous rotation, no physical limit |
 | **y** | shoulder | **33,000 steps = 90°** → 360° = 132,000 steps/rev | homed; soft-limited to **0..33,000 steps (0..90°)** |
-| **x** | elbow | per-degree not measured yet | homed; soft-limited to **−33,000..0 steps** (home at 0, positive end) |
+| **x** | elbow | **33,000 steps = 90°** → 360° = 132,000 steps/rev | homed; soft-limited to **−33,000..0 steps (0..−90°)** |
 
 - `z` has `steps_per_rev = 157005`, so `move_degrees()` is accurate for the base.
 - `y` has `steps_per_rev = 132000` (33k steps = 90°); `move_degrees("y", ...)` works.
 - `y` **soft limits are enforced once homed**: after `find_home`, home = 0 and
   moves are clamped to 0..33,000 steps (0..90°), so it can't overtravel either
   end. Limits are inactive until the axis is homed (no position reference before).
-- `x` still commands in raw **steps** until its per-degree is measured.
+- `x` has `steps_per_rev = 132000` (33k steps = 90°, same scale as y);
+  `move_degrees("x", ...)` works. Homed at 0 (positive end), travel to −90°.
 - A comfortable cruise speed for all three axes is **20000 pps** (the default).
 
 ## Home / limit switches
