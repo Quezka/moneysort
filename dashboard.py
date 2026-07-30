@@ -211,7 +211,21 @@ PAGE = """<!doctype html><html lang="en"><head>
   .settings > summary::-webkit-details-marker { display: none; }
   .settings[open] > summary { color: #c9d1d9; }
   .settings .controls { margin-top: 8px; }
+  #toasts { position: fixed; top: 18px; right: 18px; display: flex; flex-direction: column;
+            gap: 10px; z-index: 100; pointer-events: none; }
+  .toast { min-width: 220px; max-width: 380px; background: #161b22; border: 1px solid #21262d;
+           border-left: 4px solid #58a6ff; border-radius: 10px; padding: 13px 16px; color: #c9d1d9;
+           font-size: 15px; font-weight: 600; box-shadow: 0 10px 28px rgba(0,0,0,.45);
+           display: flex; align-items: center; gap: 11px;
+           opacity: 0; transform: translateX(24px); transition: opacity .25s ease, transform .25s ease; }
+  .toast.show { opacity: 1; transform: none; }
+  .toast .ico { font-size: 17px; line-height: 1; }
+  .toast.info    { border-left-color: #58a6ff; } .toast.info    .ico { color: #58a6ff; }
+  .toast.success { border-left-color: #3fb950; } .toast.success .ico { color: #3fb950; }
+  .toast.warn    { border-left-color: #d29922; } .toast.warn    .ico { color: #d29922; }
+  .toast.error   { border-left-color: #f85149; } .toast.error   .ico { color: #f85149; }
 </style></head><body>
+  <div id="toasts"></div>
   <header>
     <h1>Money<span>Sorter</span></h1>
     <div class="clock" id="clock">--:--:--</div>
@@ -247,8 +261,22 @@ const card = (label, value, unit, sub, klass="") =>
    <div class="value ${klass}">${value ?? "&mdash;"}<span class="unit">${unit||""}</span></div>
    <div class="sub">${sub||""}</div></div>`;
 
+let last = {};                       // most recent /status, for click-time checks
+
+const ICON = { info: "&#8505;", success: "&#10003;", warn: "&#9888;", error: "&#10007;" };
+function toast(msg, type = "info", ttl = 3000) {
+  const wrap = document.getElementById("toasts");
+  const el = document.createElement("div");
+  el.className = "toast " + type;
+  el.innerHTML = `<span class="ico">${ICON[type] || ICON.info}</span><span>${msg}</span>`;
+  wrap.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 300); }, ttl);
+}
+
 async function tick() {
   let d; try { d = await (await fetch("/status")).json(); } catch { return; }
+  last = d;
   document.getElementById("clock").textContent = d.time;
 
   document.getElementById("sys").innerHTML =
@@ -285,21 +313,57 @@ async function tick() {
 
 async function post(path, body) {
   try {
-    await fetch(path, {
+    const r = await fetch(path, {
       method: "POST",
       headers: body ? { "Content-Type": "application/json" } : {},
       body: body ? JSON.stringify(body) : undefined,
     });
-  } catch {}
+    let j = {}; try { j = await r.json(); } catch {}
+    return { ok: r.ok && j.ok !== false, ...j };
+  } catch { return { ok: false, error: "no connection to arm" }; }
 }
-document.getElementById("estop").onclick = () => post("/disable").then(tick);
-document.getElementById("reenable").onclick = () => post("/enable").then(tick);
-document.getElementById("gozero").onclick = () => post("/return_zero").then(tick);
-document.getElementById("zero").onclick = () => { if (confirm("Set current position as zero (new home reference)?")) post("/zero").then(tick); };
-document.getElementById("home").onclick = () => { if (confirm("Home all axes? X and Y seek their switches; Z returns to zero.")) post("/home").then(tick); };
-document.getElementById("desktop").onclick = () => post("/kiosk-exit");
-document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?")) post("/reboot"); };
-document.getElementById("poweroff").onclick = () => { if (confirm("Power OFF the Pi?")) post("/poweroff"); };
+
+const atZero = () => last.arm && last.arm.joints &&
+  Object.values(last.arm.joints).every(v => v === 0);
+
+document.getElementById("estop").onclick = async () => {
+  await post("/disable");
+  toast("Emergency stop — motors disabled", "warn");
+  tick();
+};
+document.getElementById("reenable").onclick = async () => {
+  const r = await post("/enable");
+  toast(r.ok ? "Motors re-enabled" : (r.error || "Re-enable failed"), r.ok ? "success" : "error");
+  tick();
+};
+document.getElementById("gozero").onclick = async () => {
+  if (last.estopped) { toast("Motors are disabled — re-enable first", "warn"); return; }
+  if (atZero()) { toast("Already at zero", "info"); return; }
+  toast("Returning to zero…", "info");
+  const r = await post("/return_zero");
+  if (!r.ok) toast(r.error || "Return failed", "error");
+  else if (!r.estopped) toast("Back at zero", "success");
+  tick();
+};
+document.getElementById("zero").onclick = async () => {
+  if (!confirm("Set current position as zero (new home reference)?")) return;
+  const r = await post("/zero");
+  toast(r.ok ? "Zero set at current position" : (r.error || "Failed to set zero"),
+        r.ok ? "success" : "error");
+  tick();
+};
+document.getElementById("home").onclick = async () => {
+  if (last.estopped) { toast("Motors are disabled — re-enable first", "warn"); return; }
+  if (!confirm("Home all axes? X and Y seek their switches; Z returns to zero.")) return;
+  toast("Homing axes…", "info", 5000);
+  const r = await post("/home");
+  if (!r.ok) toast(r.error || "Homing failed", "error");
+  else if (!r.estopped) toast("Homing complete", "success");
+  tick();
+};
+document.getElementById("desktop").onclick = () => { toast("Exiting to desktop…", "info"); post("/kiosk-exit"); };
+document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?")) { toast("Rebooting…", "warn", 8000); post("/reboot"); } };
+document.getElementById("poweroff").onclick = () => { if (confirm("Power OFF the Pi?")) { toast("Powering off…", "warn", 8000); post("/poweroff"); } };
 tick(); setInterval(tick, 1500);
 </script></body></html>"""
 
