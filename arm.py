@@ -11,6 +11,7 @@ If a joint runs the wrong way, set "invert": True for it in JOINTS.
 """
 import json
 import os
+import threading
 import time
 
 import lgpio
@@ -55,6 +56,9 @@ class Arm:
         lgpio.gpio_claim_output(self.h, enable_pin, 0)
         self._enabled = True
         self.cfg = joints                       # per-axis config (limits, homed, ...)
+        # Shared e-stop flag: disable() sets it so any in-flight move on any axis
+        # bails out at once; enable() clears it. Handed to every Stepper.
+        self.abort = threading.Event()
         self.motors = {}
         for name, c in joints.items():
             kw = dict(stepper_kwargs)
@@ -63,7 +67,7 @@ class Arm:
                 kw.setdefault("microsteps", 1)
             self.motors[name] = Stepper(
                 self.h, c["step"], c["dir"],
-                invert_dir=c.get("invert", False), **kw)
+                invert_dir=c.get("invert", False), abort=self.abort, **kw)
         # Claim home-switch pins as pull-up inputs (NC to GND).
         self.home_pins = {}
         for name, c in joints.items():
@@ -99,14 +103,23 @@ class Arm:
     # --- shared enable ----------------------------------------------------
     def enable(self):
         """Energize all drivers (motors hold). Always works: no opto current."""
+        self.abort.clear()                       # lift the e-stop latch on motion
         lgpio.gpio_write(self.h, self.enable_pin, 0)
         self._enabled = True
         self._write_state()
 
     def disable(self):
-        """Release all drivers (motors go free)."""
+        """Release all drivers (motors go free) and abort any motion in flight.
+
+        Setting `abort` makes every running move/home loop stop feeding pulses
+        and cut its train short, so an emergency disable stops the *task*, not
+        just the torque. Positions are now unknown after an abrupt stop, so all
+        axes are marked un-homed -- soft limits stay off until you re-home.
+        """
+        self.abort.set()
         lgpio.gpio_write(self.h, self.enable_pin, 1)
         self._enabled = False
+        self.homed.clear()
         self._write_state()
 
     @property
@@ -169,7 +182,7 @@ class Arm:
         self._write_state(moving=True)
         try:
             pending = {name: p[1] for name, p in plans.items()}
-            while pending:
+            while pending and not self.abort.is_set():
                 progressed = False
                 for name in list(pending):
                     segs = pending[name]
@@ -182,9 +195,12 @@ class Arm:
                     time.sleep(0.001)          # all queues full; let them drain
             for m, _, _ in plans.values():     # wait for every train to finish
                 while m.busy():
+                    if self.abort.is_set():
+                        m._halt()              # e-stop: cut every axis short
                     time.sleep(0.005)
-            for m, _, steps in plans.values():
-                m.position += steps
+            if not self.abort.is_set():        # positions unknown after an abort
+                for m, _, steps in plans.values():
+                    m.position += steps
         finally:
             self._write_state(moving=False)
 
@@ -202,12 +218,27 @@ class Arm:
             return False
         return lgpio.gpio_read(self.h, pin) == 1
 
+    def _stable_home(self, axis, want, n=4, poll=0.003):
+        """True once at_home(axis) equals `want` for `n` consecutive reads.
+
+        Debounces the switch so the fine approach seats firmly past the noisy
+        trigger edge instead of stopping on the first flicker -- an axis that
+        rests right on the threshold (x) then ends up solidly on the switch,
+        exactly like one with margin (y).
+        """
+        for _ in range(n):
+            if self.at_home(axis) != want:
+                return False
+            time.sleep(poll)
+        return True
+
     def find_home(self, axis, fast_pps=15000, slow_pps=500,
                   backoff=800, fine=8):
         """Seek the home switch and define that point as position 0.
 
         Fast approach to first touch -> back off until released (+ clearance)
-        -> slow fine approach to the final touch.
+        -> slow fine approach until the switch reads *stably* triggered. Bails
+        immediately (without zeroing) if the e-stop abort fires mid-seek.
         """
         c = self.cfg[axis]
         if axis not in self.home_pins:
@@ -222,12 +253,14 @@ class Arm:
             if not home():
                 m.home_seek(hd, fast_pps, home)
             # 2. back off until released, plus a little clearance
-            while home():
+            while home() and not self.abort.is_set():
                 m.jog(-hd * fine, slow_pps)
             m.jog(-hd * backoff, slow_pps)
-            # 3. slow fine approach to the final touch -> that point is zero
-            while not home():
+            # 3. slow fine approach until the switch is *solidly* pressed
+            while not self._stable_home(axis, True) and not self.abort.is_set():
                 m.jog(hd * fine, slow_pps)
+            if self.abort.is_set():            # e-stopped: don't claim a home
+                return
             m.position = 0
             self.homed.add(axis)               # enable soft limits for this axis
         finally:

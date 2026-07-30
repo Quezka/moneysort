@@ -15,6 +15,7 @@ Wiring (direct 3.3V common-cathode - no level shifter needed):
     STEP gpio -> PUL+     DIR gpio -> DIR+
     all '-' terminals bussed to Pi GND
 """
+import threading
 import time
 import lgpio
 
@@ -24,7 +25,7 @@ TX_PWM = 0  # lgpio kind selector for tx_busy / tx_room
 class Stepper:
     def __init__(self, handle, step_pin, dir_pin, en_pin=None,
                  steps_per_rev=200, microsteps=1, invert_dir=False,
-                 min_pps=400, max_pps=20000, accel_steps=800):
+                 min_pps=400, max_pps=20000, accel_steps=800, abort=None):
         """
         handle        : open gpiochip handle (lgpio.gpiochip_open(0))
         step_pin      : BCM gpio wired to PUL+
@@ -36,6 +37,8 @@ class Stepper:
         min_pps       : starting/ending pulse rate of the ramp
         max_pps       : cruise pulse rate
         accel_steps   : how many steps the ramp-up (and ramp-down) span
+        abort         : shared threading.Event; when set, any in-flight move
+                        bails out and truncates its pulse train (emergency stop)
         """
         self.h = handle
         self.step_pin = step_pin
@@ -46,6 +49,7 @@ class Stepper:
         self.min_pps = min_pps
         self.max_pps = max_pps
         self.accel_steps = accel_steps
+        self.abort = abort if abort is not None else threading.Event()
         self.position = 0                           # net steps from home
 
         lgpio.gpio_claim_output(handle, step_pin, 0)
@@ -56,12 +60,27 @@ class Stepper:
     # --- internals --------------------------------------------------------
     def _burst(self, pps, cycles):
         """Queue one constant-rate burst of `cycles` pulses at `pps` (blocking)."""
-        if cycles <= 0:
+        if cycles <= 0 or self.abort.is_set():
             return
         half = max(int(round(1_000_000 / pps / 2)), 1)   # microseconds, >=1
         while lgpio.tx_room(self.h, self.step_pin, TX_PWM) < 1:
+            if self.abort.is_set():                      # e-stop: stop feeding
+                return
             time.sleep(0.001)                            # wait for queue space
         lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
+
+    def _halt(self):
+        """Truncate whatever is currently transmitting on the step pin.
+
+        A fresh tx_pulse replaces the in-flight train with a single final cycle
+        (same idiom home_seek uses to stop its infinite seek burst), so a long
+        cruise stops within a pulse instead of playing out to the end.
+        """
+        half = max(int(round(1_000_000 / self.max_pps / 2)), 1)
+        try:
+            lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, 1)
+        except Exception:
+            pass
 
     def _ramp_segs(self, ramp_steps, max_pps, up, k=16):
         """Return [(pps, cycles), ...] for a rising (up) or falling ramp."""
@@ -117,17 +136,27 @@ class Stepper:
 
     # --- public API -------------------------------------------------------
     def move(self, steps, max_pps=None):
-        """Move a signed number of steps (+/-) with a trapezoidal ramp (blocking)."""
+        """Move a signed number of steps (+/-) with a trapezoidal ramp (blocking).
+
+        If the abort event fires mid-move it stops feeding bursts, truncates the
+        pulse train, and leaves position unchanged (the true stop point is
+        unknown -- the caller should treat the axis as no longer homed).
+        """
         if steps == 0:
             return
         level, segs = self.plan(steps, max_pps)
         self.set_dir(level)
         time.sleep(0.001)                     # DIR setup time
         for pps, cyc in segs:
+            if self.abort.is_set():
+                break
             self._burst(pps, cyc)
         while self.busy():
+            if self.abort.is_set():
+                self._halt()                  # cut the in-flight train short
             time.sleep(0.005)                 # block until the train finishes
-        self.position += steps
+        if not self.abort.is_set():
+            self.position += steps
 
     def move_degrees(self, degrees, max_pps=None):
         self.move(round(degrees / 360.0 * self.eff_spr), max_pps=max_pps)
@@ -137,15 +166,18 @@ class Stepper:
 
     def jog(self, steps, pps):
         """Constant-speed move with no accel ramp -- for slow homing chunks."""
-        if steps == 0:
+        if steps == 0 or self.abort.is_set():
             return
         level = (1 if steps < 0 else 0) ^ int(self.invert_dir)
         self.set_dir(level)
         time.sleep(0.001)
         self._burst(pps, abs(steps))
         while self.busy():
+            if self.abort.is_set():
+                self._halt()
             time.sleep(0.005)
-        self.position += steps
+        if not self.abort.is_set():
+            self.position += steps
 
     def home_seek(self, direction, pps, stop_fn, accel_steps=400,
                   poll=0.0005):
@@ -158,13 +190,15 @@ class Stepper:
         level = (1 if direction < 0 else 0) ^ int(self.invert_dir)
         self.set_dir(level)
         time.sleep(0.001)
-        start = time.monotonic()
         stopped = False
 
         # queue ramp-up bursts then one infinite cruise burst (cyc=0),
         # polling for queue room + trigger so we can bail during the ramp too
         for p, cyc in self._ramp_segs(accel_steps, pps, up=True) + [(pps, 0)]:
             while lgpio.tx_room(self.h, self.step_pin, TX_PWM) < 1:
+                if self.abort.is_set():
+                    stopped = True
+                    break
                 time.sleep(poll)
             if stopped:
                 break
@@ -172,7 +206,7 @@ class Stepper:
             lgpio.tx_pulse(self.h, self.step_pin, ph, ph, 0, cyc)
 
         while not stopped:                       # cruise: poll until trigger
-            if stop_fn():
+            if stop_fn() or self.abort.is_set():
                 break
             time.sleep(poll)
 
