@@ -14,6 +14,7 @@ over HTTP instead of by claiming GPIO directly:
     GET  /                 -> dashboard page
     GET  /status           -> system + live arm state (JSON)
     POST /move             -> {"axis":"z","steps":800,"pps":4000}
+    POST /return_zero      -> drive every axis back to its zero (no switch seek)
     POST /home             -> home all: x/y seek switches, z returns to zero
     POST /disable          -> LATCHED e-stop (cut torque, refuse moves)
     POST /enable           -> clear e-stop, re-energize
@@ -67,6 +68,9 @@ class ArmController:
 
     def home(self, pps=None):
         self._run(lambda: self.arm.home_all(max_pps=pps))
+
+    def return_zero(self, pps=None):
+        self._run(lambda: self.arm.return_zero(max_pps=pps))
 
     def disable(self):
         """Latched emergency stop: cut torque now, refuse moves until enabled.
@@ -165,6 +169,8 @@ def make_handler(ctrl):
                         ctrl.move(b.get("axis"), b.get("steps", 0), b.get("pps"))
                 elif self.path.startswith("/find_home"):
                     ctrl.find_home(self._body().get("axis"))
+                elif self.path.startswith("/return_zero"):
+                    ctrl.return_zero(self._body().get("pps"))
                 elif self.path.startswith("/home"):
                     ctrl.home(self._body().get("pps"))
                 elif self.path.startswith("/kiosk-exit"):

@@ -169,6 +169,23 @@ class Arm:
         finally:
             self._write_state(moving=False)
 
+    def return_zero(self, max_pps=None):
+        """Drive every axis back to its zero position, one at a time.
+
+        Unlike home_all this seeks no switch -- it just undoes the tracked net
+        motion (a no-op for an axis already at 0), so it relies on the current
+        position being trusted (homed or freshly zeroed). This is the everyday
+        "go home" move; switch homing is the occasional re-init.
+        """
+        self._write_state(moving=True)
+        try:
+            for m in self.motors.values():
+                if self.abort.is_set():
+                    break
+                m.go_home(max_pps=max_pps)
+        finally:
+            self._write_state(moving=False)
+
     def move_many(self, moves, max_pps=None):
         """Move several axes at once. moves = {axis: steps}.
 

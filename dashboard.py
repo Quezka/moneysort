@@ -204,6 +204,13 @@ PAGE = """<!doctype html><html lang="en"><head>
   .reenable { background: #238636; font-size: 16px; padding: 16px 22px; box-shadow: 0 4px 0 #196c2b; }
   .sys { background: #30363d; font-size: 16px; padding: 16px 22px; box-shadow: 0 4px 0 #21262d; }
   .sys.danger { background: #6e2b2b; box-shadow: 0 4px 0 #4a1d1d; }
+  .sys.go { background: #1f6feb; box-shadow: 0 4px 0 #164a9e; }
+  .settings { margin-top: 18px; border-top: 1px solid #21262d; padding-top: 6px; }
+  .settings > summary { list-style: none; cursor: pointer; color: #8b949e; font-size: 13px;
+             text-transform: uppercase; letter-spacing: 1.5px; padding: 8px 0; }
+  .settings > summary::-webkit-details-marker { display: none; }
+  .settings[open] > summary { color: #c9d1d9; }
+  .settings .controls { margin-top: 8px; }
 </style></head><body>
   <header>
     <h1>Money<span>Sorter</span></h1>
@@ -218,13 +225,20 @@ PAGE = """<!doctype html><html lang="en"><head>
   <div class="controls">
     <button id="estop" class="estop">&#9940; EMERGENCY DISABLE</button>
     <button id="reenable" class="reenable" style="display:none">Re-enable motors</button>
-    <button id="zero" class="sys">&#9678; Zero position</button>
-    <button id="home" class="sys">&#8962; Home</button>
+    <button id="gozero" class="sys go">&#8617; Return to zero</button>
+    <button id="zero" class="sys">&#9678; Set zero here</button>
     <span class="spacer"></span>
     <button id="desktop" class="sys">&#128421; Desktop</button>
     <button id="reboot" class="sys">&#8635; Reboot</button>
     <button id="poweroff" class="sys danger">&#9099; Power off</button>
   </div>
+
+  <details class="settings">
+    <summary>&#9881; Settings</summary>
+    <div class="controls">
+      <button id="home" class="sys">&#8962; Home axes (seek switches)</button>
+    </div>
+  </details>
 
 <script>
 const cls = (v, warn, bad) => v == null ? "" : v >= bad ? "bad" : v >= warn ? "warn" : "ok";
@@ -280,7 +294,8 @@ async function post(path, body) {
 }
 document.getElementById("estop").onclick = () => post("/disable").then(tick);
 document.getElementById("reenable").onclick = () => post("/enable").then(tick);
-document.getElementById("zero").onclick = () => { if (confirm("Set current position as zero?")) post("/zero").then(tick); };
+document.getElementById("gozero").onclick = () => post("/return_zero").then(tick);
+document.getElementById("zero").onclick = () => { if (confirm("Set current position as zero (new home reference)?")) post("/zero").then(tick); };
 document.getElementById("home").onclick = () => { if (confirm("Home all axes? X and Y seek their switches; Z returns to zero.")) post("/home").then(tick); };
 document.getElementById("desktop").onclick = () => post("/kiosk-exit");
 document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?")) post("/reboot"); };
