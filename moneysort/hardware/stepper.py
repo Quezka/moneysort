@@ -19,14 +19,9 @@ import threading
 import time
 import lgpio
 
-TX_PWM = 0  # lgpio kind selector for tx_busy / tx_room
+from moneysort.domain import planning
 
-# The cruise is queued as many short bursts instead of one long one. lgpio plays
-# a finite burst to the end no matter what (only an *infinite* burst can be cut
-# short), so a single 20 s cruise would ignore an e-stop until it finished. With
-# ~this-many-seconds bursts, disable() stops the feed and the few already-queued
-# bursts drain in a fraction of a second (torque is already off regardless).
-CRUISE_CHUNK_S = 0.04
+TX_PWM = 0  # lgpio kind selector for tx_busy / tx_room
 
 
 class Stepper:
@@ -77,44 +72,17 @@ class Stepper:
         lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
 
 
-    def _ramp_segs(self, ramp_steps, max_pps, up, k=16):
-        """Return [(pps, cycles), ...] for a rising (up) or falling ramp."""
-        segs = []
-        if ramp_steps <= 0:
-            return segs
-        base, rem = divmod(ramp_steps, k)
-        for i in range(k):
-            cyc = base + (1 if i < rem else 0)
-            if cyc <= 0:
-                continue
-            frac = (i + 1) / k
-            if up:
-                pps = self.min_pps + (max_pps - self.min_pps) * frac
-            else:
-                pps = max_pps - (max_pps - self.min_pps) * frac
-            segs.append((max(pps, self.min_pps), cyc))
-        return segs
-
     def plan(self, steps, max_pps=None):
         """Build a move: returns (dir_level, [(pps, cycles), ...]).
 
-        Shared by move() and Arm.move_many(); the latter interleaves several
-        steppers' segment lists to drive multiple axes at once.
+        The magnitude profile comes from the pure planning module; this adds the
+        hardware direction bit (sign of steps XOR the wiring invert). Shared by
+        move() and Arm.move_many(); the latter interleaves several steppers'
+        segment lists to drive multiple axes at once.
         """
         max_pps = max_pps or self.max_pps
-        direction = 1 if steps < 0 else 0
-        level = direction ^ int(self.invert_dir)
-        n = abs(steps)
-        ramp = min(self.accel_steps, n // 2)
-        cruise = n - 2 * ramp
-        segs = self._ramp_segs(ramp, max_pps, up=True)
-        if cruise > 0:
-            chunk = max(1, int(max_pps * CRUISE_CHUNK_S))   # bound e-stop latency
-            full, rem = divmod(cruise, chunk)
-            segs.extend([(max_pps, chunk)] * full)
-            if rem:
-                segs.append((max_pps, rem))
-        segs += self._ramp_segs(ramp, max_pps, up=False)
+        level = (1 if steps < 0 else 0) ^ int(self.invert_dir)
+        segs = planning.plan_segments(steps, max_pps, self.min_pps, self.accel_steps)
         return level, segs
 
     def set_dir(self, level):
@@ -190,7 +158,7 @@ class Stepper:
 
         # queue ramp-up bursts then one infinite cruise burst (cyc=0),
         # polling for queue room + trigger so we can bail during the ramp too
-        for p, cyc in self._ramp_segs(accel_steps, pps, up=True) + [(pps, 0)]:
+        for p, cyc in planning.ramp_segs(accel_steps, pps, self.min_pps, up=True) + [(pps, 0)]:
             while lgpio.tx_room(self.h, self.step_pin, TX_PWM) < 1:
                 if self.abort.is_set():
                     stopped = True

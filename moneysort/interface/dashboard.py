@@ -1,27 +1,14 @@
 #!/usr/bin/env python3
-"""Money Sorter status dashboard - a dependency-free web UI for the Pi's screen.
+"""Dashboard presentation: the HTML PAGE plus system-metric helpers.
 
-Serves a dark, touch-friendly page (sized for the 1280x800 panel) showing the
-essentials: system health plus the arm's joint state. Uses only the Python
-standard library, so no pip install is needed.
-
-Run:
-    python3 dashboard.py            # serves on http://0.0.0.0:8080
-Show it fullscreen on the Pi with kiosk.sh, or open the URL from any device.
-
-Arm state is read from state.json (written by the arm controller) if present;
-until then the arm tiles show "no data" gracefully.
+Pure presentation/telemetry for the Money Sorter web UI, dependency-free (Python
+standard library only). The armd server (``interface/server.py``) imports
+``PAGE`` and these helpers, owns the arm, and assembles ``/status``. This module
+touches no GPIO and runs no server of its own.
 """
-import json
 import os
 import socket
 import subprocess
-import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-PORT = 8080
-STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
-ENABLE_PIN = 26   # shared driver enable (active-low): LOW = enabled, HIGH = disabled
 
 
 # --- metric collection ------------------------------------------------------
@@ -92,43 +79,6 @@ def ip_addr():
         return "?"
 
 
-def arm_state():
-    """Read the arm controller's state file if it exists and is fresh."""
-    try:
-        with open(STATE_PATH) as f:
-            data = json.load(f)
-        age = time.time() - os.path.getmtime(STATE_PATH)
-        data["_age"] = round(age, 1)
-        data["_live"] = age < 5
-        return data
-    except (OSError, ValueError):
-        return None
-
-
-def motors_enabled():
-    """Real level of the shared enable pin (active-low): True if motors are on."""
-    try:
-        out = subprocess.run(["pinctrl", "get", str(ENABLE_PIN)],
-                             capture_output=True, text=True, timeout=1).stdout
-        seg = out.split("|")
-        if len(seg) >= 2:
-            return seg[1].strip().split()[0] == "lo"   # low = enabled
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return None
-
-
-def set_enable(enable):
-    """Drive the shared enable pin. True -> motors enabled; False -> disabled."""
-    level = "dl" if enable else "dh"
-    try:
-        subprocess.run(["pinctrl", "set", str(ENABLE_PIN), "op", level],
-                       timeout=2, check=True)
-        return True
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
 def system_action(action):
     """Reboot or power off the Pi (needs passwordless sudo)."""
     cmd = {"reboot": ["sudo", "reboot"], "poweroff": ["sudo", "poweroff"]}.get(action)
@@ -150,24 +100,7 @@ def exit_kiosk():
         return False
 
 
-def snapshot():
-    mem_used, mem_total = mem_pct()
-    disk_used, disk_total = disk_pct()
-    return {
-        "host": socket.gethostname(),
-        "ip": ip_addr(),
-        "temp": cpu_temp_c(),
-        "load": load_avg(),
-        "mem_pct": mem_used, "mem_total": mem_total,
-        "disk_pct": disk_used, "disk_total": disk_total,
-        "uptime": uptime_str(),
-        "motors_enabled": motors_enabled(),
-        "arm": arm_state(),
-        "time": time.strftime("%H:%M:%S"),
-    }
-
-
-# --- web server -------------------------------------------------------------
+# --- page -------------------------------------------------------------------
 PAGE = """<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Money Sorter</title>
@@ -368,51 +301,3 @@ document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?"
 document.getElementById("poweroff").onclick = () => { if (confirm("Power OFF the Pi?")) { toast("Powering off…", "warn", 8000); post("/poweroff"); } };
 tick(); setInterval(tick, 1500);
 </script></body></html>"""
-
-
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *a):  # quiet
-        pass
-
-    def _send(self, body, ctype):
-        data = body.encode() if isinstance(body, str) else body
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def do_GET(self):
-        if self.path.startswith("/status"):
-            self._send(json.dumps(snapshot()), "application/json")
-        else:
-            self._send(PAGE, "text/html; charset=utf-8")
-
-    def do_POST(self):
-        actions = {
-            "/disable":  lambda: set_enable(False),   # emergency: cut motor torque
-            "/enable":   lambda: set_enable(True),
-            "/reboot":   lambda: system_action("reboot"),
-            "/poweroff": lambda: system_action("poweroff"),
-        }
-        fn = next((f for p, f in actions.items() if self.path.startswith(p)), None)
-        if fn is None:
-            self.send_response(404)
-            self.end_headers()
-            return
-        ok = fn()
-        self._send(json.dumps({"ok": ok, "motors_enabled": motors_enabled()}),
-                   "application/json")
-
-
-def main():
-    srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"Money Sorter dashboard: http://{ip_addr()}:{PORT}  (Ctrl-C to stop)")
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        srv.shutdown()
-
-
-if __name__ == "__main__":
-    main()

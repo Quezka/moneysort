@@ -1,56 +1,24 @@
 #!/usr/bin/env python3
 """Multi-axis arm built from Stepper joints sharing one gpiochip handle.
 
-Axis map (BCM), common-cathode direct-to-3.3V wiring (see docs/PINOUT.md):
-    x = elbow     STEP=GPIO5   DIR=GPIO6
-    y = shoulder  STEP=GPIO17  DIR=GPIO27   (home switch at start; homing TODO)
-    z = base      STEP=GPIO23  DIR=GPIO24   (continuous rotation)
-Shared enable on GPIO26. All '-' terminals bus to Pi GND.
-
+Pins and calibration live in `moneysort.config.JOINTS` (see docs/PINOUT.md):
+    x = elbow (home switch GPIO7)   y = shoulder (home switch GPIO8)
+    z = base (continuous, no switch)
+Shared enable on GPIO26 (active-low). All '-' terminals bus to Pi GND.
 If a joint runs the wrong way, set "invert": True for it in JOINTS.
 """
-import json
-import os
 import threading
 import time
 
 import lgpio
-from stepper import Stepper
 
-# Runtime state file read by dashboard.py (same directory as this module).
-STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
-
-# axis -> config (BCM pins + calibration). See docs/PINOUT.md.
-#   step, dir     : BCM gpio for PUL+ / DIR+
-#   invert        : flip if positive moves the "wrong" way
-#   steps_per_rev : measured steps for a full 360 deg output turn (folds in
-#                   microstepping + gearing) -- makes move_degrees() accurate
-#   travel        : usable range in steps for a limited joint (home switch)
-#   home_pin      : BCM gpio of the home/limit switch (NC to GND, internal pull-up)
-#   home_dir      : sign of the step direction that moves TOWARD the switch
-# Home switches are normally-closed: not-home = LOW, at-home / broken wire = HIGH
-# (fail-safe -- a disconnected switch reads as triggered and stops motion).
-# NOTE: y and x switches are both wired and find_home works for both
-# (x home_dir=+1 verified 2026-07-30). x rest point sits right at the switch
-# edge, so at_home("x") can flicker LOW at position 0 -- benign.
-JOINTS = {
-    "x": {"step": 5,  "dir": 6,  "invert": False, "travel": 33000,
-          "steps_per_rev": 132000, "home_pin": 7, "home_dir": 1},             # elbow: 0..-33000 steps = 0..-90 deg, home (0) toward +steps
-    "y": {"step": 17, "dir": 27, "invert": False, "travel": 33000,
-          "steps_per_rev": 132000, "home_pin": 8, "home_dir": -1},            # shoulder: 0..33000 steps = 0..90 deg, home (0) toward -steps
-    "z": {"step": 23, "dir": 24, "invert": False, "steps_per_rev": 157005},   # base: measured via full rev, 360 deg = 157005 steps (90 deg = 39251)
-}
-
-# Single shared enable line: every driver's ENA+ ties to this pin.
-# Active-low logic: pin LOW = ENA opto off = drivers ENABLED (motors hold);
-# pin HIGH = disabled. Owned by the Arm (not the Steppers) because lgpio can't
-# let three Steppers each claim the same pin.
-ENABLE_PIN = 26   # BCM GPIO26 = header pin 37
+from moneysort.config import ENABLE_PIN, GPIOCHIP, JOINTS
+from moneysort.hardware.stepper import Stepper
 
 
 class Arm:
     def __init__(self, joints=JOINTS, enable_pin=ENABLE_PIN, **stepper_kwargs):
-        self.h = lgpio.gpiochip_open(0)
+        self.h = lgpio.gpiochip_open(GPIOCHIP)
         self.enable_pin = enable_pin
         # Claim LOW so all drivers come up enabled/holding.
         lgpio.gpio_claim_output(self.h, enable_pin, 0)
@@ -82,23 +50,6 @@ class Arm:
             if t:
                 self._limits[name] = (0, t) if c.get("home_dir", -1) < 0 else (-t, 0)
         self.homed = set()
-        self._write_state()
-
-    # --- dashboard state --------------------------------------------------
-    def _write_state(self, moving=False):
-        """Atomically dump joint angles + status to state.json for the dashboard."""
-        state = {
-            "joints": {name: round(m.angle, 1) for name, m in self.motors.items()},
-            "moving": moving,
-            "enabled": self._enabled,
-        }
-        try:
-            tmp = STATE_PATH + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(state, f)
-            os.replace(tmp, STATE_PATH)   # atomic swap; dashboard never sees a partial file
-        except OSError:
-            pass
 
     # --- shared enable ----------------------------------------------------
     def enable(self):
@@ -106,7 +57,6 @@ class Arm:
         self.abort.clear()                       # lift the e-stop latch on motion
         lgpio.gpio_write(self.h, self.enable_pin, 0)
         self._enabled = True
-        self._write_state()
 
     def disable(self):
         """Release all drivers (motors go free) and abort any motion in flight.
@@ -120,7 +70,6 @@ class Arm:
         lgpio.gpio_write(self.h, self.enable_pin, 1)
         self._enabled = False
         self.homed.clear()
-        self._write_state()
 
     @property
     def enabled(self):
@@ -140,11 +89,7 @@ class Arm:
 
     def move(self, name, steps, max_pps=None):
         steps = self._clamp_steps(name, int(steps))
-        self._write_state(moving=True)
-        try:
-            self.motors[name].move(steps, max_pps=max_pps)
-        finally:
-            self._write_state(moving=False)
+        self.motors[name].move(steps, max_pps=max_pps)
 
     def move_degrees(self, name, degrees, max_pps=None):
         m = self.motors[name]
@@ -157,17 +102,13 @@ class Arm:
         switch-less axes (z/base) just drive back to their existing zero (no-op
         if already there). Stops early if the e-stop abort fires.
         """
-        self._write_state(moving=True)
-        try:
-            for name, m in self.motors.items():
-                if self.abort.is_set():
-                    break
-                if name in self.home_pins:
-                    self.find_home(name)
-                else:
-                    m.go_home(max_pps=max_pps)
-        finally:
-            self._write_state(moving=False)
+        for name, m in self.motors.items():
+            if self.abort.is_set():
+                break
+            if name in self.home_pins:
+                self.find_home(name)
+            else:
+                m.go_home(max_pps=max_pps)
 
     def return_zero(self, max_pps=None):
         """Drive every axis back to its zero position, one at a time.
@@ -177,14 +118,10 @@ class Arm:
         position being trusted (homed or freshly zeroed). This is the everyday
         "go home" move; switch homing is the occasional re-init.
         """
-        self._write_state(moving=True)
-        try:
-            for m in self.motors.values():
-                if self.abort.is_set():
-                    break
-                m.go_home(max_pps=max_pps)
-        finally:
-            self._write_state(moving=False)
+        for m in self.motors.values():
+            if self.abort.is_set():
+                break
+            m.go_home(max_pps=max_pps)
 
     def move_many(self, moves, max_pps=None):
         """Move several axes at once. moves = {axis: steps}.
@@ -206,35 +143,30 @@ class Arm:
             return
         time.sleep(0.001)                      # DIR setup for all axes
 
-        self._write_state(moving=True)
-        try:
-            pending = {name: p[1] for name, p in plans.items()}
-            while pending and not self.abort.is_set():
-                progressed = False
-                for name in list(pending):
-                    segs = pending[name]
-                    if plans[name][0].try_queue(*segs[0]):
-                        segs.pop(0)
-                        progressed = True
-                        if not segs:
-                            del pending[name]
-                if not progressed:
-                    time.sleep(0.001)          # all queues full; let them drain
-            for m, _, _ in plans.values():     # drain every queue (bursts are
-                while m.busy():                # short, so an abort clears fast)
-                    time.sleep(0.005)
-            if not self.abort.is_set():        # positions unknown after an abort
-                for m, _, steps in plans.values():
-                    m.position += steps
-        finally:
-            self._write_state(moving=False)
+        pending = {name: p[1] for name, p in plans.items()}
+        while pending and not self.abort.is_set():
+            progressed = False
+            for name in list(pending):
+                segs = pending[name]
+                if plans[name][0].try_queue(*segs[0]):
+                    segs.pop(0)
+                    progressed = True
+                    if not segs:
+                        del pending[name]
+            if not progressed:
+                time.sleep(0.001)          # all queues full; let them drain
+        for m, _, _ in plans.values():     # drain every queue (bursts are
+            while m.busy():                # short, so an abort clears fast)
+                time.sleep(0.005)
+        if not self.abort.is_set():        # positions unknown after an abort
+            for m, _, steps in plans.values():
+                m.position += steps
 
     def zero(self, axis=None):
         """Define the current position as 0 (manual home). One axis or all."""
         motors = [self.motors[axis]] if axis else self.motors.values()
         for m in motors:
             m.position = 0
-        self._write_state()
 
     def at_home(self, axis):
         """True if the axis's home switch is actuated (NC open = HIGH)."""
@@ -272,24 +204,20 @@ class Arm:
         hd = 1 if c.get("home_dir", -1) >= 0 else -1     # +/-1 toward the switch
         home = lambda: self.at_home(axis)
 
-        self._write_state(moving=True)
-        try:
-            # 1. fast approach to first touch (skip if already on the switch)
-            if not home():
-                m.home_seek(hd, fast_pps, home)
-            # 2. back off until released, plus a little clearance
-            while home() and not self.abort.is_set():
-                m.jog(-hd * fine, slow_pps)
-            m.jog(-hd * backoff, slow_pps)
-            # 3. slow fine approach until the switch is *solidly* pressed
-            while not self._stable_home(axis, True) and not self.abort.is_set():
-                m.jog(hd * fine, slow_pps)
-            if self.abort.is_set():            # e-stopped: don't claim a home
-                return
-            m.position = 0
-            self.homed.add(axis)               # enable soft limits for this axis
-        finally:
-            self._write_state(moving=False)
+        # 1. fast approach to first touch (skip if already on the switch)
+        if not home():
+            m.home_seek(hd, fast_pps, home)
+        # 2. back off until released, plus a little clearance
+        while home() and not self.abort.is_set():
+            m.jog(-hd * fine, slow_pps)
+        m.jog(-hd * backoff, slow_pps)
+        # 3. slow fine approach until the switch is *solidly* pressed
+        while not self._stable_home(axis, True) and not self.abort.is_set():
+            m.jog(hd * fine, slow_pps)
+        if self.abort.is_set():            # e-stopped: don't claim a home
+            return
+        m.position = 0
+        self.homed.add(axis)               # enable soft limits for this axis
 
     def angles(self):
         return {name: round(m.angle, 1) for name, m in self.motors.items()}

@@ -22,18 +22,32 @@ The repo is the single source of truth:
 
 ## Architecture
 
-- **`armd.py`** — long-running daemon (systemd `moneysort-arm`) that OWNS all
-  GPIO for its lifetime, so the emergency stop is *latched*. Serves the dashboard
-  + JSON control API on **:8080** (binds `0.0.0.0`, reachable from any LAN PC).
-- **`arm.py`** (`Arm`) — multi-axis: `move`, `move_many` (coordinated), homing
-  (`find_home`, `home_all`), `return_zero`, `zero`, shared `enable`/`disable`
-  with an `abort` Event, homed-aware soft limits.
-- **`stepper.py`** (`Stepper`) — per-axis STEP/DIR via `lgpio.tx_pulse`
-  (hardware-timed), trapezoidal accel, cruise chunked into ~40ms bursts so an
-  e-stop drains fast (no re-enable lurch).
-- **`dashboard.py`** — stdlib HTTP dashboard (PAGE + metric helpers), reused by
-  `armd`. Return-to-zero button, Home in a Settings section, themed toasts.
-- **`arm_test.py`** — CLI HTTP client (see `docs/USAGE.md`).
+Layered `moneysort/` package; **dependencies point inward** (interface → app →
+hardware → domain; `config` is the shared innermost). `armd.py` and `arm_test.py`
+at the repo root are thin shims into the package (kept so the systemd unit and
+the documented CLI paths don't change).
+
+- **`domain/`** — pure logic, no hardware or HTTP (unit-testable off-Pi):
+  - `planning.py` — trapezoidal motion profile (`plan_segments`, `ramp_segs`);
+    cruise chunked into ~40ms bursts so an e-stop drains fast (no re-enable lurch).
+  - `kinematics.py` — FK/IK (**stub**, to fill next; needs measured link lengths).
+  - `config.py` (package root) — single source of truth: `PORT`, `ENABLE_PIN`,
+    `GPIOCHIP`, `JOINTS` (pins + calibration).
+- **`hardware/stepper.py`** (`Stepper`) — per-axis STEP/DIR via `lgpio.tx_pulse`
+  (hardware-timed), consumes `domain.planning`.
+- **`app/`** — orchestration/policy, no HTTP:
+  - `arm.py` (`Arm`) — `move`, `move_many` (coordinated), homing (`find_home`,
+    `home_all`), `return_zero`, `zero`, shared `enable`/`disable` with an `abort`
+    Event, homed-aware soft limits.
+  - `controller.py` (`ArmController`) — serializes motion (one move at a time),
+    latched e-stop, assembles `status()`.
+- **`interface/`** — delivery:
+  - `server.py` — long-running daemon (systemd `moneysort-arm`) that OWNS all
+    GPIO for its lifetime (so the e-stop is latched). Serves dashboard + JSON API
+    on **:8080** (binds `0.0.0.0`, reachable from any LAN PC).
+  - `dashboard.py` — the HTML `PAGE` + stdlib system-metric helpers (no GPIO).
+  - `cli.py` — CLI HTTP client (see `docs/USAGE.md`).
+- **`tests/`** — `python3 -m unittest discover tests` (pure domain; no hardware).
 - **`deploy/`** — `deploy.sh`, `setup.sh`, systemd unit, kiosk autostart.
 
 ## Hardware (summary; full wiring in `docs/PINOUT.md`)
