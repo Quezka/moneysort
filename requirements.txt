@@ -1,5 +1,5 @@
-# Runtime
-lgpio
-
-# Dev / debugging (VS Code remote debug)
-debugpy==1.8.21
+# The daemon runs on the SYSTEM Python (systemd ExecStart=/usr/bin/python3),
+# which provides lgpio via the OS package (sudo apt install python3-lgpio).
+# Do NOT pip-install lgpio here: building it from source in the venv needs swig
+# and breaks deploy. This venv is only for dev tooling.
+debugpy==1.8.21   # VS Code remote debug
