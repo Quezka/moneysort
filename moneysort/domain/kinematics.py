@@ -28,15 +28,15 @@ import math
 from dataclasses import dataclass
 
 # --- geometry (mm) --------------------------------------------------------
-# Fitted to on-arm tip measurements 2026-09-20 (least-squares over home + a
-# shoulder-swung pose), NOT tape measurements -- joint offsets and the tool tip
-# sitting past the last pivot make the effective pivot-to-pivot lengths differ.
-# (Tape read upper 220 / forearm-to-pivot ~305 / base 120; the fit below tracks
-# the real tool-TIP kinematics.) UPPER_ARM rests on one shoulder pose so far --
-# refine with a second, larger-angle pose.
-BASE_HEIGHT_MM = 185.0    # base plane -> shoulder pivot
-UPPER_ARM_MM = 140.0      # shoulder pivot -> elbow pivot        (L1)
-FOREARM_MM = 355.0        # elbow pivot -> tool TIP              (L2, incl. tool)
+# Fitted to on-arm tool-TIP measurements 2026-09-20 (least-squares over three
+# shoulder poses spanning 0..87 deg, x=0), NOT tape measurements -- joint offsets
+# and the tool tip sitting past the last pivot make the effective pivot-to-pivot
+# lengths differ (tape read upper 220 / forearm-to-pivot ~305 / base 120).
+# Residuals <=6mm. The forearm length is to the TIP; the last pivot is ~50mm short
+# of it. (An x-varying tip pose could further check FOREARM, not yet done.)
+BASE_HEIGHT_MM = 177.0    # base plane -> shoulder pivot
+UPPER_ARM_MM = 149.0      # shoulder pivot -> elbow pivot        (L1)
+FOREARM_MM = 356.0        # elbow pivot -> tool TIP              (L2, incl. tool)
 
 # --- joint limits (degrees) -----------------------------------------------
 Y_MIN, Y_MAX = 0.0, 90.0
