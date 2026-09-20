@@ -4,9 +4,11 @@
 Single axis : python3 arm_test.py <x|y|z> [steps] [pps]
 Multi axis  : python3 arm_test.py x:400 y:-800 z:1200 [pps]   (any arg with ':')
 Home an axis: python3 arm_test.py home <x|y|z>
+Move to xyz : python3 arm_test.py moveto <X> <Y> <Z> [pps]    (tool tip, mm, via IK)
 
     steps : signed step count (+ / - sets direction), default 800
     pps   : cruise pulses per second, default 20000
+    X Y Z : tool-tip target in the base frame, millimetres
 
 See docs/USAGE.md for the full API (curl from any PC).
 """
@@ -26,6 +28,10 @@ def build_request(args):
     if args and args[0] == "home":
         axis = args[1] if len(args) > 1 else "y"
         return "/find_home", {"axis": axis}, f"find_home {axis}"
+    if args and args[0] == "moveto":
+        X, Y, Z = (float(args[i]) for i in (1, 2, 3))
+        pps = int(args[4]) if len(args) > 4 else DEFAULT_PPS
+        return "/move_to", {"x": X, "y": Y, "z": Z, "pps": pps}, f"move_to ({X},{Y},{Z}) @ {pps}"
     if args and ":" in args[0]:
         pps = DEFAULT_PPS
         if len(args) > 1 and ":" not in args[-1]:

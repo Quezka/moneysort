@@ -13,6 +13,7 @@ import time
 import lgpio
 
 from moneysort.config import ENABLE_PIN, GPIOCHIP, JOINTS
+from moneysort.domain import kinematics
 from moneysort.hardware.stepper import Stepper
 
 
@@ -94,6 +95,28 @@ class Arm:
     def move_degrees(self, name, degrees, max_pps=None):
         m = self.motors[name]
         self.move(name, round(degrees / 360.0 * m.eff_spr), max_pps=max_pps)
+
+    def move_to(self, point, max_pps=None):
+        """Move the tool tip to a Point (mm, base frame) via inverse kinematics.
+
+        Solves the joint angles, converts each to an absolute step target, and
+        drives all axes together with move_many. Requires x and y to be homed
+        (their positions must map to real angles for FK/IK to be meaningful);
+        raises kinematics.OutOfReach if the point is unreachable.
+        """
+        needs = {"x", "y"} & set(self.motors)
+        if not needs.issubset(self.homed):
+            missing = sorted(needs - self.homed)
+            raise RuntimeError(f"home {missing} before move_to (need a position reference)")
+        angles = kinematics.inverse(point)                 # raises OutOfReach
+        moves = {}
+        for name, deg in (("x", angles.x), ("y", angles.y), ("z", angles.z)):
+            m = self.motors.get(name)
+            if m is None:
+                continue
+            target = round(deg / 360.0 * m.eff_spr)        # absolute step position
+            moves[name] = target - m.position              # relative move
+        self.move_many(moves, max_pps=max_pps)
 
     def home_all(self, max_pps=None):
         """Home the whole arm in one call, one axis at a time.

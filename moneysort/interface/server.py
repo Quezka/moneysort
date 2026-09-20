@@ -14,6 +14,7 @@ over HTTP instead of by claiming GPIO directly:
     GET  /                 -> dashboard page
     GET  /status           -> system + live arm state (JSON)
     POST /move             -> {"axis":"z","steps":800,"pps":4000}
+    POST /move_to          -> {"x":..,"y":..,"z":..} tool tip to a point (mm, via IK)
     POST /return_zero      -> drive every axis back to its zero (no switch seek)
     POST /home             -> home all: x/y seek switches, z returns to zero
     POST /disable          -> LATCHED e-stop (cut torque, refuse moves)
@@ -31,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from moneysort.config import PORT
 from moneysort.app.controller import ArmController
+from moneysort.domain.kinematics import Point
 from moneysort.interface import dashboard   # metric helpers, PAGE, system_action
 
 
@@ -89,6 +91,10 @@ def make_handler(ctrl):
                     ctrl.enable()
                 elif self.path.startswith("/zero"):
                     ctrl.zero()
+                elif self.path.startswith("/move_to"):
+                    b = self._body()
+                    ctrl.move_to(Point(float(b["x"]), float(b["y"]), float(b["z"])),
+                                 b.get("pps"))
                 elif self.path.startswith("/move"):
                     b = self._body()
                     if isinstance(b.get("moves"), dict):

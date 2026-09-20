@@ -44,6 +44,9 @@ class ArmController:
     def return_zero(self, pps=None):
         self._run(lambda: self.arm.return_zero(max_pps=pps))
 
+    def move_to(self, point, pps=None):
+        self._run(lambda: self.arm.move_to(point, max_pps=pps))
+
     def disable(self):
         """Latched emergency stop: cut torque now, refuse moves until enabled.
 
