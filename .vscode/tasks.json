@@ -4,7 +4,7 @@
     {
       "label": "Deploy to Raspberry Pi",
       "type": "shell",
-      "command": "ssh money-sorter@${input:piAddress} \"~/deploy.sh\"",
+      "command": "ssh money-sorter@money-sorter.local \"~/deploy.sh\"",
       "dependsOn": ["Git Commit and Push"],
       "problemMatcher": [],
       "group": {
@@ -25,12 +25,6 @@
       "type": "promptString",
       "description": "Enter commit message",
       "default": "update"
-    },
-    {
-      "id": "piAddress",
-      "type": "promptString",
-      "description": "Enter Raspberry Pi IP address",
-      "default": "192.168.88.4"
     }
   ]
 }
