@@ -83,5 +83,7 @@ model but deferred.
 
 ## Docs
 
+- `docs/ARCHITECTURE.md` — the layered design, every module, runtime model, and
+  the key mechanisms (motion planning, e-stop, homing, soft limits).
 - `docs/PINOUT.md` — full wiring, calibration, home switches.
 - `docs/USAGE.md` — commanding the arm from a terminal (`arm_test.py` + curl API).
