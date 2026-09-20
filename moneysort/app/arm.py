@@ -203,10 +203,17 @@ class Arm:
         m = self.motors[axis]
         hd = 1 if c.get("home_dir", -1) >= 0 else -1     # +/-1 toward the switch
         home = lambda: self.at_home(axis)
+        # Debounced "confirmed at home" for the fast phase: a single raw read can
+        # blip HIGH from step-pulse noise/vibration during fast motion, which
+        # would end the fast approach (or skip it entirely) and crawl the rest of
+        # the way at slow_pps. Require a few consecutive HIGH reads; while the
+        # switch is open this returns on the first (LOW) read, so it costs
+        # nothing during the approach.
+        confirmed = lambda: self._stable_home(axis, True, n=3, poll=0.0004)
 
-        # 1. fast approach to first touch (skip if already on the switch)
-        if not home():
-            m.home_seek(hd, fast_pps, home)
+        # 1. fast approach to first touch (skip only if really on the switch)
+        if not confirmed():
+            m.home_seek(hd, fast_pps, confirmed)
         # 2. back off until released, plus a little clearance
         while home() and not self.abort.is_set():
             m.jog(-hd * fine, slow_pps)
