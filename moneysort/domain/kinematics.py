@@ -10,10 +10,10 @@ Kinematic model (measured 2026-09-20; all lengths mm, angles degrees):
                     when the shoulder swings, the forearm keeps its orientation
                     in space (verified on the real arm 2026-09-20)
 
-Reference poses (with base z = 0):
-    (y=0,  x=0)   upper arm up, forearm horizontal  -> tool at (r=310, h=340)  the "r" shape
-    (y=0,  x=-90) forearm folded straight down      -> tool at (r=0,   h=30)
-    (y=90, x=0)   upper arm horizontal, forearm down
+Reference poses (with base z = 0), tool tip in (r, height) mm:
+    (y=0,  x=0)   upper arm up, forearm horizontal  -> (r = FOREARM, h = BASE + UPPER)  the "r" shape
+    (y=0,  x=-90) forearm folded straight down      -> (r = 0, h = BASE + UPPER - FOREARM)
+    (y=90, x=0)   whole arm straight out horizontal -> (r = UPPER + FOREARM, h = BASE)
 
 Everything in the arm's BASE frame:
     r      = horizontal distance from the base (yaw) axis
@@ -27,10 +27,16 @@ The shoulder pivot is assumed to sit ON the base yaw axis (r=0) at BASE_HEIGHT.
 import math
 from dataclasses import dataclass
 
-# --- geometry (measured, mm) ----------------------------------------------
-BASE_HEIGHT_MM = 120.0    # base plane -> shoulder pivot
-UPPER_ARM_MM = 220.0      # shoulder pivot -> elbow pivot   (L1)
-FOREARM_MM = 310.0        # elbow pivot -> tool tip          (L2)
+# --- geometry (mm) --------------------------------------------------------
+# Fitted to on-arm tip measurements 2026-09-20 (least-squares over home + a
+# shoulder-swung pose), NOT tape measurements -- joint offsets and the tool tip
+# sitting past the last pivot make the effective pivot-to-pivot lengths differ.
+# (Tape read upper 220 / forearm-to-pivot ~305 / base 120; the fit below tracks
+# the real tool-TIP kinematics.) UPPER_ARM rests on one shoulder pose so far --
+# refine with a second, larger-angle pose.
+BASE_HEIGHT_MM = 185.0    # base plane -> shoulder pivot
+UPPER_ARM_MM = 140.0      # shoulder pivot -> elbow pivot        (L1)
+FOREARM_MM = 355.0        # elbow pivot -> tool TIP              (L2, incl. tool)
 
 # --- joint limits (degrees) -----------------------------------------------
 Y_MIN, Y_MAX = 0.0, 90.0

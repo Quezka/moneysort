@@ -11,23 +11,23 @@ from moneysort.domain.kinematics import JointAngles, Point, OutOfReach
 
 class TestForward(unittest.TestCase):
     def test_home_pose_is_the_r_shape(self):
-        """y=0,x=0: upper arm up, forearm horizontal -> tool at (r=310, h=340)."""
+        """y=0,x=0: upper arm up, forearm horizontal -> tool at (r=FOREARM, h=BASE+UPPER)."""
         p = k.forward(JointAngles(x=0, y=0, z=0))
-        self.assertAlmostEqual(p.x, 310.0, places=6)   # r along z=0 -> +X
+        self.assertAlmostEqual(p.x, k.FOREARM_MM, places=6)   # r along z=0 -> +X
         self.assertAlmostEqual(p.y, 0.0, places=6)
-        self.assertAlmostEqual(p.z, 340.0, places=6)   # 120 + 220
+        self.assertAlmostEqual(p.z, k.BASE_HEIGHT_MM + k.UPPER_ARM_MM, places=6)
 
     def test_elbow_folded_down(self):
-        """y=0,x=-90: forearm straight down -> tool on axis near the base."""
+        """y=0,x=-90: forearm straight down -> tool on the axis (r=0)."""
         p = k.forward(JointAngles(x=-90, y=0, z=0))
         self.assertAlmostEqual(p.x, 0.0, places=6)
-        self.assertAlmostEqual(p.z, 30.0, places=6)    # 120 + 220 - 310
+        self.assertAlmostEqual(p.z, k.BASE_HEIGHT_MM + k.UPPER_ARM_MM - k.FOREARM_MM, places=6)
 
     def test_base_yaw_rotates_into_XY(self):
         p = k.forward(JointAngles(x=0, y=0, z=90))
         self.assertAlmostEqual(p.x, 0.0, places=6)
-        self.assertAlmostEqual(p.y, 310.0, places=6)   # r now along +Y
-        self.assertAlmostEqual(p.z, 340.0, places=6)
+        self.assertAlmostEqual(p.y, k.FOREARM_MM, places=6)   # r now along +Y
+        self.assertAlmostEqual(p.z, k.BASE_HEIGHT_MM + k.UPPER_ARM_MM, places=6)
 
 
 class TestRoundTrip(unittest.TestCase):
@@ -71,7 +71,7 @@ class TestReach(unittest.TestCase):
             k.inverse(Point(0.0, 0.0, 650.0))
 
     def test_reachable_helper(self):
-        self.assertTrue(k.reachable(Point(310.0, 0.0, 340.0)))   # home tool
+        self.assertTrue(k.reachable(k.forward(JointAngles(x=0, y=0, z=0))))   # home tool
         self.assertFalse(k.reachable(Point(0.0, 0.0, 5000.0)))
 
 
