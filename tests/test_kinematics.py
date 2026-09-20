@@ -41,7 +41,7 @@ class TestRoundTrip(unittest.TestCase):
         for y in range(0, 91, 15):
             for x in range(-90, 1, 15):
                 r_signed = (k.UPPER_ARM_MM * math.sin(math.radians(y))
-                            + k.FOREARM_MM * math.sin(math.radians(k._forearm_phi(y, x))))
+                            + k.FOREARM_MM * math.sin(math.radians(k._forearm_phi(x))))
                 if r_signed < 5:
                     continue
                 for z in range(-150, 151, 60):

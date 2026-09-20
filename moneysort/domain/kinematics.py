@@ -5,9 +5,10 @@ Kinematic model (measured 2026-09-20; all lengths mm, angles degrees):
     z = base      : yaw about the vertical axis (continuous)
     y = shoulder  : upper-arm angle FROM VERTICAL, 0 = straight up,
                     90 = horizontal-forward (range 0..90)
-    x = elbow     : range 0..-90; the forearm's absolute angle from vertical is
-                    phi = y + 90 - x, i.e. the elbow's bend relative to the upper
-                    arm is (90 - x), independent of y (a physical relative joint)
+    x = elbow     : range 0..-90; the forearm holds an ABSOLUTE angle from
+                    vertical, phi = 90 - x, independent of the shoulder -- i.e.
+                    when the shoulder swings, the forearm keeps its orientation
+                    in space (verified on the real arm 2026-09-20)
 
 Reference poses (with base z = 0):
     (y=0,  x=0)   upper arm up, forearm horizontal  -> tool at (r=310, h=340)  the "r" shape
@@ -22,10 +23,6 @@ Everything in the arm's BASE frame:
 
 The shoulder pivot is assumed to sit ON the base yaw axis (r=0) at BASE_HEIGHT.
 
-NOTE: the elbow is modelled as a *relative* joint (forearm carries with the
-upper arm). If on the real arm the forearm instead holds an *absolute* angle
-when the shoulder moves, phi becomes (90 - x) and this must change -- verify by
-moving y with x held at 0 and watching whether the forearm's bend stays constant.
 """
 import math
 from dataclasses import dataclass
@@ -60,15 +57,19 @@ class Point:
     z: float
 
 
-def _forearm_phi(y, x):
-    """Forearm absolute angle from vertical (degrees)."""
-    return y + 90.0 - x
+def _forearm_phi(x):
+    """Forearm absolute angle from vertical (degrees).
+
+    The elbow is an absolute joint: the forearm keeps its orientation in space
+    regardless of the shoulder, so phi depends only on x.
+    """
+    return 90.0 - x
 
 
 def forward(angles):
     """Joint angles -> tool-tip Point in the base frame."""
     a = math.radians(angles.y)                 # upper arm from vertical
-    phi = math.radians(_forearm_phi(angles.y, angles.x))
+    phi = math.radians(_forearm_phi(angles.x))
     r = UPPER_ARM_MM * math.sin(a) + FOREARM_MM * math.sin(phi)
     height = BASE_HEIGHT_MM + UPPER_ARM_MM * math.cos(a) + FOREARM_MM * math.cos(phi)
     zr = math.radians(angles.z)
@@ -101,8 +102,9 @@ def inverse(target, check_limits=True):
     psi = math.atan2(a_comp, b_comp)            # target direction from vertical
     alpha = psi - math.atan2(L2 * math.sin(delta), L1 + L2 * math.cos(delta))
 
+    # forearm absolute angle phi = alpha + delta; elbow is absolute so x = 90 - phi
     y = math.degrees(alpha)
-    x = 90.0 - math.degrees(delta)
+    x = 90.0 - math.degrees(alpha + delta)
     angles = JointAngles(x=x, y=y, z=z)
 
     if check_limits and not (Y_MIN - 1e-6 <= y <= Y_MAX + 1e-6
