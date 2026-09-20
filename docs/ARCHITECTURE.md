@@ -117,11 +117,13 @@ as a list of `(pps, cycles)` bursts. No hardware, so it's unit-tested directly.
   (see *Emergency stop* below). Direction is intentionally *not* handled here —
   it's a hardware concern.
 
-**`kinematics.py`** — forward/inverse kinematics. Currently a **stub** with the
-intended interface (`forward`, `inverse`, `JointAngles`, `Point`) and geometry
-placeholders. The model is base yaw (z) + a 2-link planar arm (shoulder y, elbow
-x): `base = atan2(y, x)`, then standard 2-link IK for reach/height. Fills in once
-the link lengths are measured.
+**`kinematics.py`** — forward/inverse kinematics, implemented from the measured
+geometry (upper arm 220 mm, forearm 310 mm, shoulder pivot 120 mm up). Model:
+base yaw (z) + a 2-link planar arm in that plane (shoulder y from vertical,
+forearm absolute `φ = y + 90 − x`). `forward(JointAngles) → Point`,
+`inverse(Point) → JointAngles` (home elbow branch, raises `OutOfReach` beyond the
+links or joint limits), plus `reachable()`. Fully unit-tested (FK↔IK round-trip).
+Pending on-arm validation of the geometry and the *relative*-elbow assumption.
 
 ### hardware — `stepper.py`
 
@@ -291,8 +293,9 @@ join them once the solver is implemented.
 
 ## What's next
 
-- **Inverse kinematics** — implement `domain/kinematics.py` from measured link
-  lengths; unit-test off-hardware, then expose a "move to point" path.
+- **Inverse kinematics** — implemented in `domain/kinematics.py` and unit-tested;
+  next validate it against the real arm, then expose a "move to point" path
+  (`Arm.move_to(point)` → `inverse` → `move_many`) with a `/move_to` endpoint.
 - **Camera (Intel RealSense)** — a new interface/adapter that detects a target,
   transforms it into the arm's base frame, and feeds IK. `pyrealsense2` on the
   Pi is the risky install (may need building) — de-risk with an import spike.

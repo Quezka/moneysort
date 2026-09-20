@@ -30,7 +30,9 @@ the documented CLI paths don't change).
 - **`domain/`** — pure logic, no hardware or HTTP (unit-testable off-Pi):
   - `planning.py` — trapezoidal motion profile (`plan_segments`, `ramp_segs`);
     cruise chunked into ~40ms bursts so an e-stop drains fast (no re-enable lurch).
-  - `kinematics.py` — FK/IK (**stub**, to fill next; needs measured link lengths).
+  - `kinematics.py` — FK/IK, implemented from measured geometry (base yaw +
+    2-link planar arm); `forward()`/`inverse()` + `OutOfReach`. Pending on-arm
+    validation of the geometry and the relative-elbow assumption.
   - `config.py` (package root) — single source of truth: `PORT`, `ENABLE_PIN`,
     `GPIOCHIP`, `JOINTS` (pins + calibration).
 - **`hardware/stepper.py`** (`Stepper`) — per-axis STEP/DIR via `lgpio.tx_pulse`
@@ -77,9 +79,14 @@ resting on the switch edge seats solidly), emergency-disable-aborts-motion,
 dashboard (return-to-zero, Home in Settings, toasts). Note: the homing seek
 *timeout* was deliberately removed — no runaway guard, relies on wired switches.
 
-Next: **inverse kinematics** (camera xy → joint angles), then **camera
-integration**. A setpoint-tracking controller for visual servoing is the eventual
-model but deferred.
+**Kinematics implemented** (`domain/kinematics.py`, measured geometry: upper arm
+220 mm, forearm 310 mm, shoulder pivot 120 mm up; base yaw + 2-link planar; elbow
+modelled *relative*). 8 unit tests incl. FK↔IK round-trip, all pass. **Pending:
+validate against the real arm** (home r/h ≈ 31/34 cm; move y+30° x=0 → relative
+model predicts r/h ≈ 37.9/15.6 cm vs absolute 42.0/31.1 cm — decides the elbow
+model), then wire a `move_to(point)` path (`inverse` → `move_many`) + `/move_to`
+endpoint/CLI. Then **camera** (Intel RealSense; `pyrealsense2` on Pi is the risky
+install). Visual-servoing controller deferred.
 
 ## Docs
 
