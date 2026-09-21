@@ -1,42 +1,33 @@
 """Forward / inverse kinematics for the arm -- pure geometry, no hardware.
 
-Kinematic model (measured 2026-09-20; all lengths mm, angles degrees):
+The arm is a base yaw + a 2-link arm with a LEVELLING WRIST: the forearm tilts
+with the elbow, but a passive pivot keeps the tool level, so the tool adds a
+CONSTANT horizontal reach rather than rotating with the forearm. Fitted to a 3x3
+grid of on-arm tool-tip measurements (2026-09-20), rms ~1.0 cm, max ~1.9 cm:
 
-    z = base      : yaw about the vertical axis (continuous)
-    y = shoulder  : upper-arm angle FROM VERTICAL, 0 = straight up,
-                    90 = horizontal-forward (range 0..90)
-    x = elbow     : range 0..-90; the forearm holds an ABSOLUTE angle from
-                    vertical, phi = 90 - x, independent of the shoulder -- i.e.
-                    when the shoulder swings, the forearm keeps its orientation
-                    in space (verified on the real arm 2026-09-20)
+    r = L1*sin(y) + LF*cos(x) + LT      (horizontal reach from the base axis)
+    h = L1*cos(y) + LF*sin(x) + D       (height above the base plate)
 
-Reference poses (with base z = 0), tool tip in (r, height) mm:
-    (y=0,  x=0)   upper arm up, forearm horizontal  -> (r = FOREARM, h = BASE + UPPER)  the "r" shape
-    (y=0,  x=-90) forearm folded straight down      -> (r = 0, h = BASE + UPPER - FOREARM)
-    (y=90, x=0)   whole arm straight out horizontal -> (r = UPPER + FOREARM, h = BASE)
+    y = shoulder, degrees from vertical (0 = up .. 90 = horizontal), range 0..90
+    x = elbow,    degrees, range 0..-90 (forearm angle from vertical is 90 - x)
+    L1 = upper-arm length, LF = forearm length, LT = level tool's horizontal
+    reach, D = base-pivot height + tool vertical offset (h is from the base plate)
 
-Everything in the arm's BASE frame:
-    r      = horizontal distance from the base (yaw) axis
-    height = distance above the base plane
-    X, Y   = r * (cos z, sin z)   -- z is measured from the +X base direction
-    Z      = height
+Base frame: X, Y = r*(cos z, sin z) with z the base yaw; Z = h. move_to targets
+are in this frame, millimetres, Z measured up from the base plate.
 
-The shoulder pivot is assumed to sit ON the base yaw axis (r=0) at BASE_HEIGHT.
-
+NOTE: this is an empirical fit of a linkage arm, not a from-CAD model, so the
+lengths are effective values (they won't match tape measurements). Re-fit from a
+fresh grid if the mechanism changes; ~1 cm residual is the linkage vs this form.
 """
 import math
 from dataclasses import dataclass
 
-# --- geometry (mm) --------------------------------------------------------
-# Fitted to on-arm tool-TIP measurements 2026-09-20 (least-squares over three
-# shoulder poses spanning 0..87 deg, x=0), NOT tape measurements -- joint offsets
-# and the tool tip sitting past the last pivot make the effective pivot-to-pivot
-# lengths differ (tape read upper 220 / forearm-to-pivot ~305 / base 120).
-# Residuals <=6mm. The forearm length is to the TIP; the last pivot is ~50mm short
-# of it. (An x-varying tip pose could further check FOREARM, not yet done.)
-BASE_HEIGHT_MM = 177.0    # base plane -> shoulder pivot
-UPPER_ARM_MM = 149.0      # shoulder pivot -> elbow pivot        (L1)
-FOREARM_MM = 356.0        # elbow pivot -> tool TIP              (L2, incl. tool)
+# --- fitted geometry (mm) -------------------------------------------------
+UPPER_ARM_MM = 161.2   # L1
+FOREARM_MM = 210.1     # LF
+TOOL_REACH_MM = 131.7  # LT  (level tool's constant horizontal reach)
+V_OFFSET_MM = 168.2    # D   (base-plate -> effective vertical zero)
 
 # --- joint limits (degrees) -----------------------------------------------
 Y_MIN, Y_MAX = 0.0, 90.0
@@ -57,66 +48,61 @@ class JointAngles:
 
 @dataclass(frozen=True)
 class Point:
-    """A point in the arm's base frame, millimetres."""
+    """A point in the arm's base frame, millimetres (Z up from the base plate)."""
     x: float
     y: float
     z: float
 
 
-def _forearm_phi(x):
-    """Forearm absolute angle from vertical (degrees).
-
-    The elbow is an absolute joint: the forearm keeps its orientation in space
-    regardless of the shoulder, so phi depends only on x.
-    """
-    return 90.0 - x
-
-
 def forward(angles):
     """Joint angles -> tool-tip Point in the base frame."""
-    a = math.radians(angles.y)                 # upper arm from vertical
-    phi = math.radians(_forearm_phi(angles.x))
-    r = UPPER_ARM_MM * math.sin(a) + FOREARM_MM * math.sin(phi)
-    height = BASE_HEIGHT_MM + UPPER_ARM_MM * math.cos(a) + FOREARM_MM * math.cos(phi)
+    y = math.radians(angles.y)
+    x = math.radians(angles.x)
+    r = UPPER_ARM_MM * math.sin(y) + FOREARM_MM * math.cos(x) + TOOL_REACH_MM
+    h = UPPER_ARM_MM * math.cos(y) + FOREARM_MM * math.sin(x) + V_OFFSET_MM
     zr = math.radians(angles.z)
-    return Point(r * math.cos(zr), r * math.sin(zr), height)
+    return Point(r * math.cos(zr), r * math.sin(zr), h)
 
 
 def inverse(target, check_limits=True):
     """Target Point -> JointAngles that reach it.
 
-    Solves the base yaw, then a 2-link planar arm in that vertical plane. Uses
-    the elbow branch that matches the home pose (elbow bend >= 90, i.e. x <= 0).
-    Raises OutOfReach if the point is beyond the links or (when check_limits)
-    outside the joint ranges.
+    Solves base yaw, then the two-link system
+        A = L1 sin y + LF cos x ,  B = L1 cos y + LF sin x
+    with A = r - LT, B = h - D. Picks the branch within the joint limits.
+    Raises OutOfReach if the point is beyond the links or outside the ranges.
     """
     z = math.degrees(math.atan2(target.y, target.x))
     r = math.hypot(target.x, target.y)
-    a_comp = r                                  # horizontal (sin) component
-    b_comp = target.z - BASE_HEIGHT_MM          # vertical (cos) component
-    d = math.hypot(a_comp, b_comp)
+    A = r - TOOL_REACH_MM
+    B = target.z - V_OFFSET_MM
+    d2 = A * A + B * B
+    L1, LF = UPPER_ARM_MM, FOREARM_MM
 
-    L1, L2 = UPPER_ARM_MM, FOREARM_MM
-    if d > L1 + L2 + 1e-9 or d < abs(L1 - L2) - 1e-9:
-        raise OutOfReach(f"distance {d:.1f}mm outside [{abs(L1 - L2):.0f}, {L1 + L2:.0f}]")
+    denom = 2 * LF * math.sqrt(d2) if d2 > 0 else 0.0
+    if denom == 0:
+        raise OutOfReach("degenerate target")
+    cos_off = (d2 + LF * LF - L1 * L1) / denom
+    if abs(cos_off) > 1.0 + 1e-9:
+        raise OutOfReach(f"unreachable: |cos|={cos_off:.3f}")
+    cos_off = max(-1.0, min(1.0, cos_off))
+    off = math.acos(cos_off)
+    base = math.atan2(B, A)
 
-    # elbow: law of cosines. delta = angle between the two link vectors (0..180);
-    # the home pose is the positive branch, giving x = 90 - delta in [-90, 90].
-    cos_delta = max(-1.0, min(1.0, (d * d - L1 * L1 - L2 * L2) / (2 * L1 * L2)))
-    delta = math.acos(cos_delta)                # radians, 0..pi
+    best = None
+    for xr in (base - off, base + off):            # elbow angle candidates
+        yr = math.atan2(A - LF * math.cos(xr), B - LF * math.sin(xr))
+        x, y = math.degrees(xr), math.degrees(yr)
+        in_range = (Y_MIN - 1e-4 <= y <= Y_MAX + 1e-4
+                    and X_MIN - 1e-4 <= x <= X_MAX + 1e-4)
+        if in_range:
+            return JointAngles(x=x, y=y, z=z)
+        if best is None:
+            best = JointAngles(x=x, y=y, z=z)
 
-    psi = math.atan2(a_comp, b_comp)            # target direction from vertical
-    alpha = psi - math.atan2(L2 * math.sin(delta), L1 + L2 * math.cos(delta))
-
-    # forearm absolute angle phi = alpha + delta; elbow is absolute so x = 90 - phi
-    y = math.degrees(alpha)
-    x = 90.0 - math.degrees(alpha + delta)
-    angles = JointAngles(x=x, y=y, z=z)
-
-    if check_limits and not (Y_MIN - 1e-6 <= y <= Y_MAX + 1e-6
-                             and X_MIN - 1e-6 <= x <= X_MAX + 1e-6):
-        raise OutOfReach(f"joint angles out of range: {angles}")
-    return angles
+    if check_limits:
+        raise OutOfReach(f"joint angles out of range (nearest {best})")
+    return best
 
 
 def reachable(target):
