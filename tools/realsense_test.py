@@ -8,65 +8,71 @@ Opens the camera, streams aligned depth + colour, and prints the depth and the
 3D point (camera frame) at the centre pixel -- the primitive the vision pipeline
 is built on: pixel -> 3D point via the depth intrinsics.
 
-Tries a full USB3 config first, then falls back to lower-bandwidth settings so it
-still streams over USB2 (the D435 can't do depth+colour both at 640x480@30 on
-USB2). No numpy needed. Ctrl-C to stop.
+Chooses the stream config from the negotiated USB type: full 640x480@30 on USB3,
+low-bandwidth configs on USB2 (the D435 can't do depth+colour both at 640@30 on
+USB2 -- attempting it knocks the camera off the bus). Each config is validated by
+actually pulling frames before it's accepted. No numpy needed. Ctrl-C to stop.
 """
 import sys
+import time
 
 try:
     import pyrealsense2 as rs
 except ImportError:
     sys.exit("pyrealsense2 not installed -- run deploy/install_realsense.sh first")
 
-# (depth w,h,fps), (colour w,h,fps) -- high bandwidth first, USB2-safe last
-CONFIGS = [
-    ((640, 480, 30), (640, 480, 30)),   # USB3
-    ((480, 270, 15), (424, 240, 15)),   # USB2-friendly
-    ((480, 270, 6),  (424, 240, 6)),    # minimal
+USB3_CONFIGS = [((640, 480, 30), (640, 480, 30))]
+USB2_CONFIGS = [
+    ((480, 270, 15), (424, 240, 15)),
+    ((480, 270, 6),  (424, 240, 6)),
+    ((424, 240, 6),  (424, 240, 6)),
 ]
 
 
-def start_pipeline():
-    """Try each config until one starts; return (pipeline, description)."""
-    for (dw, dh, dfps), (cw, ch, cfps) in CONFIGS:
+def start_streaming(configs):
+    """Start + validate (pull frames) the first config that actually holds."""
+    for (dw, dh, dfps), (cw, ch, cfps) in configs:
+        desc = f"depth {dw}x{dh}@{dfps} + colour {cw}x{ch}@{cfps}"
         pipe = rs.pipeline()
         cfg = rs.config()
         cfg.enable_stream(rs.stream.depth, dw, dh, rs.format.z16, dfps)
         cfg.enable_stream(rs.stream.color, cw, ch, rs.format.bgr8, cfps)
         try:
             pipe.start(cfg)
-            return pipe, f"depth {dw}x{dh}@{dfps} + colour {cw}x{ch}@{cfps}"
+            for _ in range(10):                 # must actually STREAM, not just start
+                pipe.wait_for_frames(2000)
+            return pipe, desc
         except RuntimeError as e:
+            print(f"  {desc} didn't hold ({e}); trying lower...")
             try:
                 pipe.stop()
             except RuntimeError:
                 pass
-            print(f"  config {dw}x{dh}@{dfps} failed ({e}); trying lower...")
+            time.sleep(1.0)
     return None, None
 
 
 def main():
     ctx = rs.context()
     if len(ctx.query_devices()) == 0:
-        sys.exit("No RealSense device found (check USB port + cable).")
+        sys.exit("No RealSense device found (check USB port + cable; re-plug it).")
     dev = ctx.query_devices()[0]
     name = dev.get_info(rs.camera_info.name)
     try:
         usb = dev.get_info(rs.camera_info.usb_type_descriptor)
     except RuntimeError:
         usb = "?"
-    print(f"device: {name}   USB: {usb}  ({'USB3' if usb.startswith('3') else 'USB2 -- reduced bandwidth'})")
+    is_usb3 = usb.startswith("3")
+    print(f"device: {name}   USB: {usb}  ({'USB3' if is_usb3 else 'USB2 -- reduced bandwidth'})")
 
-    pipe, desc = start_pipeline()
+    pipe, desc = start_streaming(USB3_CONFIGS if is_usb3 else USB2_CONFIGS)
     if pipe is None:
-        sys.exit("Could not start any stream config (power/cable/bandwidth?).")
+        sys.exit("Could not hold any stream config -- re-plug the camera and, for "
+                 "full res, use a USB3 cable in a blue port.")
     align = rs.align(rs.stream.color)
     print(f"streaming: {desc}. Ctrl-C to stop.\n")
 
     try:
-        for _ in range(15):                    # let auto-exposure settle
-            pipe.wait_for_frames()
         while True:
             frames = align.process(pipe.wait_for_frames())
             depth = frames.get_depth_frame()
@@ -74,7 +80,7 @@ def main():
                 continue
             w, h = depth.get_width(), depth.get_height()
             cx, cy = w // 2, h // 2
-            d = depth.get_distance(cx, cy)     # metres (0.0 = no depth)
+            d = depth.get_distance(cx, cy)      # metres (0.0 = no depth)
             intr = depth.profile.as_video_stream_profile().intrinsics
             x, y, z = rs.rs2_deproject_pixel_to_point(intr, [cx, cy], d)
             if d == 0:
