@@ -43,23 +43,33 @@ class Camera:
         self._intr = None
         self._pipe = None
         self._align = None
-        self._run = False
+        self._run = True
         if not _LIBS:
+            self._run = False
             self.error = f"camera libs missing ({_IMPORT_ERR})"
             return
-        deadline = time.time() + 8.0             # tolerate the device being briefly busy
-        while True:                              # (old daemon releasing it on restart)
+        threading.Thread(target=self._supervise, daemon=True).start()
+
+    def _supervise(self):
+        """Keep the camera open and recover automatically from unplug/replug."""
+        while self._run:
             try:
-                self._open()
-                break
+                self._open()                 # sets pipe/align/desc, or raises
+                self.ok, self.error = True, None
+                self._capture()              # runs until a persistent failure
             except Exception as e:
-                if "no RealSense device" in str(e) or time.time() > deadline:
-                    self.error = f"camera unavailable: {e}"
-                    return
-                time.sleep(1.0)
-        self._run = True
-        threading.Thread(target=self._loop, daemon=True).start()
-        self.ok = True
+                self.error = f"camera unavailable: {e}"
+            self.ok = False
+            try:
+                if self._pipe is not None:
+                    self._pipe.stop()
+            except RuntimeError:
+                pass
+            self._pipe = None
+            with self._lock:
+                self._color = self._depth = self._intr = None
+            if self._run:
+                time.sleep(2.0)              # let a re-plug settle, then retry
 
     def _open(self):
         ctx = rs.context()
@@ -93,7 +103,8 @@ class Camera:
                 time.sleep(0.5)
         raise RuntimeError(f"no stream config held ({last})")
 
-    def _loop(self):
+    def _capture(self):
+        fails = 0
         while self._run:
             try:
                 frames = self._align.process(self._pipe.wait_for_frames(2000))
@@ -105,8 +116,12 @@ class Camera:
                 intr = depth.profile.as_video_stream_profile().intrinsics
                 with self._lock:
                     self._color, self._depth, self._intr = img, depth, intr
+                fails = 0
             except RuntimeError:
-                time.sleep(0.1)              # transient disconnect / timeout
+                fails += 1
+                if fails > 5:               # persistent disconnect -> reopen device
+                    raise
+                time.sleep(0.1)
 
     def _encode(self, img):
         if img is None:
