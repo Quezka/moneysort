@@ -126,7 +126,7 @@ PAGE = """<!doctype html><html lang="en"><head>
   .dot.live { background: #3fb950; box-shadow: 0 0 8px #3fb950; }
   .joints { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
   .camwrap { position: relative; background: #0d1117; border: 1px solid #21262d;
-             border-radius: 14px; overflow: hidden; aspect-ratio: 1/1; max-width: 520px; }
+             border-radius: 14px; overflow: hidden; aspect-ratio: 1/1; max-width: 300px; }
   .cam { width: 100%; height: 100%; object-fit: contain; display: block; }
   .camoff { position: absolute; inset: 0; display: flex; align-items: center;
             justify-content: center; color: #6e7681; font-size: 15px; }
@@ -220,8 +220,11 @@ function toast(msg, type = "info", ttl = 3800) {
   setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 300); }, ttl);
 }
 
+let build = null;                    // daemon build id; reload the page if it changes
 async function tick() {
   let d; try { d = await (await fetch("/status")).json(); } catch { return; }
+  if (build && d.build && d.build !== build) { location.reload(); return; }
+  build = d.build;
   last = d;
   document.getElementById("clock").textContent = d.time;
 
@@ -262,7 +265,7 @@ async function tick() {
   document.getElementById("camstate").textContent = cam.ok ? (cam.desc || "live") : (cam.error || "offline");
   if (cam.ok) {
     coff.style.display = "none"; cimg.style.display = "";
-    if (!cimg.src) cimg.src = "/camera";        // start the MJPEG stream once
+    if (!cimg.src) cimg.src = "/camera?detect=1";   // annotated MJPEG stream (coins circled)
   } else {
     cimg.style.display = "none"; cimg.removeAttribute("src"); coff.style.display = "";
   }

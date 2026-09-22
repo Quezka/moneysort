@@ -37,6 +37,8 @@ from moneysort.domain.kinematics import Point
 from moneysort.hardware.camera import Camera
 from moneysort.interface import dashboard   # metric helpers, PAGE, system_action
 
+BUILD = str(int(time.time()))               # changes each daemon start -> kiosk auto-reloads
+
 
 def build_status(ctrl, camera):
     mem_used, mem_total = dashboard.mem_pct()
@@ -54,6 +56,7 @@ def build_status(ctrl, camera):
         "estopped": st["estopped"],
         "arm": {"joints": st["joints"], "moving": st["moving"], "_age": 0.0},
         "camera": {"ok": camera.ok, "desc": camera.desc, "error": camera.error},
+        "build": BUILD,
         "time": time.strftime("%H:%M:%S"),
     }
 
@@ -104,19 +107,21 @@ def make_handler(ctrl, camera):
             if not camera.ok:
                 self._send(json.dumps({"error": camera.error or "no camera"}), code=503)
                 return
+            annotate = "detect" in self.path               # /camera?detect=1 -> coins drawn
+            period = 0.2 if annotate else 1 / 15.0         # detection is heavier -> ~5fps
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             try:
                 while True:
-                    jpg = camera.jpeg()
+                    jpg = camera.detect()[1] if annotate else camera.jpeg()
                     if jpg:
                         self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
                         self.wfile.write(f"Content-Length: {len(jpg)}\r\n\r\n".encode())
                         self.wfile.write(jpg)
                         self.wfile.write(b"\r\n")
-                    time.sleep(1 / 15.0)
+                    time.sleep(period)
             except (BrokenPipeError, ConnectionResetError):
                 pass                                       # client closed the stream
 
