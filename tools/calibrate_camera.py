@@ -38,6 +38,7 @@ except ImportError:
     sys.exit("pyrealsense2 not installed -- run deploy/install_realsense.sh first")
 
 from coin_detect import start, USB2, USB3            # reuse camera pipeline setup
+from moneysort.config import JOINTS
 from moneysort.domain import kinematics
 from moneysort.domain.kinematics import JointAngles
 
@@ -46,11 +47,29 @@ OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "camera_calib.json")
 
 
+def _post(path, body):
+    urllib.request.urlopen(
+        urllib.request.Request(ARMD + path, data=json.dumps(body).encode(),
+                               headers={"Content-Type": "application/json"}),
+        timeout=120).read()
+
+
 def arm_angles():
     """Current joint angles (deg) from armd, as a JointAngles."""
     with urllib.request.urlopen(ARMD + "/status", timeout=5) as r:
         j = json.load(r)["arm"]["joints"]
     return JointAngles(x=j["x"], y=j["y"], z=j["z"])
+
+
+def goto(target):
+    """Drive all axes back to the survey pose (joint angles), coordinated."""
+    cur = arm_angles()
+    moves = {}
+    for a in ("x", "y", "z"):
+        spr = JOINTS[a]["steps_per_rev"]
+        moves[a] = round(getattr(target, a) / 360 * spr) - round(getattr(cur, a) / 360 * spr)
+    if any(moves.values()):
+        _post("/move", {"moves": moves})
 
 
 def tool_base_mm():
@@ -108,27 +127,31 @@ def main():
 
     pipe = start(ctx)
     align = rs.align(rs.stream.color)
-    cam_pts, base_pts, survey = [], [], None
     print("\n=== camera->base calibration ===")
-    print("Home x & y first. Park the arm at your SURVEY pose for every CAPTURE.\n")
+    input("Home x & y, park the arm at your SURVEY pose (camera looking down at the "
+          "tray). Enter to lock it in...")
+    survey = arm_angles()
+    print(f"survey pose: x={survey.x:.1f} y={survey.y:.1f} z={survey.z:.1f}")
+    print("It auto-returns here before each capture, so keep a hand near the e-stop.\n")
+
+    cam_pts, base_pts = [], []
     try:
         while True:
-            input(f"[point {len(cam_pts)+1}] Arm at SURVEY pose, ONE coin in view. "
-                  "Enter to capture (or Ctrl-C to finish)...")
+            goto(survey)                       # every capture from the same pose
+            input(f"[point {len(cam_pts)+1}] ONE coin in view. "
+                  "Enter to capture (Ctrl-C to finish)...")
             cam, px = detect_one(pipe, align)
             if cam is None:
                 print("  no coin detected in range -- adjust and retry.")
                 continue
-            here = arm_angles()
-            if survey is None:
-                survey = here
-            print(f"  p_cam = ({cam[0]:.0f},{cam[1]:.0f},{cam[2]:.0f}) mm  px={px}")
-            input("  Now JOG the nozzle to TOUCH that coin, then Enter...")
+            print(f"  p_cam  = ({cam[0]:.0f},{cam[1]:.0f},{cam[2]:.0f}) mm  px={px}")
+            input("  JOG the nozzle to TOUCH that coin (another SSH terminal: "
+                  "arm_test.py), then Enter...")
             base = tool_base_mm()
             print(f"  p_base = ({base[0]:.0f},{base[1]:.0f},{base[2]:.0f}) mm")
             cam_pts.append(cam)
             base_pts.append(base)
-            print(f"  recorded ({len(cam_pts)} total). Return to survey pose for the next.\n")
+            print(f"  recorded ({len(cam_pts)} total). Returning to survey pose...\n")
     except KeyboardInterrupt:
         print()
     finally:
