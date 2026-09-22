@@ -33,10 +33,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from moneysort.config import PORT
 from moneysort.app.controller import ArmController
 from moneysort.domain.kinematics import Point
+from moneysort.hardware.camera import Camera
 from moneysort.interface import dashboard   # metric helpers, PAGE, system_action
 
 
-def build_status(ctrl):
+def build_status(ctrl, camera):
     mem_used, mem_total = dashboard.mem_pct()
     disk_used, disk_total = dashboard.disk_pct()
     st = ctrl.status()
@@ -51,11 +52,12 @@ def build_status(ctrl):
         "motors_enabled": st["enabled"],
         "estopped": st["estopped"],
         "arm": {"joints": st["joints"], "moving": st["moving"], "_age": 0.0},
+        "camera": {"ok": camera.ok, "desc": camera.desc, "error": camera.error},
         "time": time.strftime("%H:%M:%S"),
     }
 
 
-def make_handler(ctrl):
+def make_handler(ctrl, camera):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
@@ -79,12 +81,44 @@ def make_handler(ctrl):
 
         def do_GET(self):
             if self.path.startswith("/status"):
-                self._send(json.dumps(build_status(ctrl)))
+                self._send(json.dumps(build_status(ctrl, camera)))
+            elif self.path.startswith("/camera"):
+                self._stream_mjpeg()
+            elif self.path.startswith("/snapshot"):
+                jpg = camera.jpeg() if camera.ok else None
+                if jpg is None:
+                    self._send(json.dumps({"error": camera.error or "no frame"}), code=503)
+                else:
+                    self._send(jpg, "image/jpeg")
             else:
                 self._send(dashboard.PAGE, "text/html; charset=utf-8")
 
+        def _stream_mjpeg(self):
+            if not camera.ok:
+                self._send(json.dumps({"error": camera.error or "no camera"}), code=503)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            try:
+                while True:
+                    jpg = camera.jpeg()
+                    if jpg:
+                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
+                        self.wfile.write(f"Content-Length: {len(jpg)}\r\n\r\n".encode())
+                        self.wfile.write(jpg)
+                        self.wfile.write(b"\r\n")
+                    time.sleep(1 / 15.0)
+            except (BrokenPipeError, ConnectionResetError):
+                pass                                       # client closed the stream
+
         def do_POST(self):
             try:
+                if self.path.startswith("/detect"):
+                    coins, _ = camera.detect(**self._body())
+                    self._send(json.dumps({"ok": True, "coins": coins}))
+                    return
                 if self.path.startswith("/disable"):
                     ctrl.disable()
                 elif self.path.startswith("/enable"):
@@ -126,14 +160,17 @@ def make_handler(ctrl):
 
 def main():
     ctrl = ArmController()
-    srv = ThreadingHTTPServer(("0.0.0.0", PORT), make_handler(ctrl))
+    camera = Camera()                            # graceful if no device/libs
+    print("camera:", camera.desc if camera.ok else f"off ({camera.error})")
+    srv = ThreadingHTTPServer(("0.0.0.0", PORT), make_handler(ctrl, camera))
     signal.signal(signal.SIGTERM, lambda *_: srv.shutdown())
     signal.signal(signal.SIGINT, lambda *_: srv.shutdown())
-    print(f"armd on http://{dashboard.ip_addr()}:{PORT}  (owns arm, latched e-stop)")
+    print(f"armd on http://{dashboard.ip_addr()}:{PORT}  (owns arm + camera, latched e-stop)")
     try:
         srv.serve_forever()
     finally:
         ctrl.close()
+        camera.close()
 
 
 if __name__ == "__main__":

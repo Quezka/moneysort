@@ -125,6 +125,11 @@ PAGE = """<!doctype html><html lang="en"><head>
   .dot { width: 10px; height: 10px; border-radius: 50%; background: #6e7681; }
   .dot.live { background: #3fb950; box-shadow: 0 0 8px #3fb950; }
   .joints { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .camwrap { position: relative; background: #0d1117; border: 1px solid #21262d;
+             border-radius: 14px; overflow: hidden; aspect-ratio: 1/1; max-width: 520px; }
+  .cam { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .camoff { position: absolute; inset: 0; display: flex; align-items: center;
+            justify-content: center; color: #6e7681; font-size: 15px; }
   .joint .value { font-size: 42px; }
   .moving { color: #58a6ff; } .idle { color: #6e7681; }
   .controls { display: flex; align-items: center; gap: 14px; margin-top: 22px; }
@@ -170,6 +175,12 @@ PAGE = """<!doctype html><html lang="en"><head>
 
   <div class="section"><span class="dot" id="armdot"></span>Robot Arm <span id="armstate" class="idle" style="font-size:13px"></span></div>
   <div class="joints" id="joints"></div>
+
+  <div class="section"><span class="dot" id="camdot"></span>Camera <span id="camstate" class="idle" style="font-size:13px"></span></div>
+  <div class="camwrap">
+    <img id="cam" class="cam" alt="camera feed">
+    <div id="camoff" class="camoff">camera offline</div>
+  </div>
 
   <div class="controls">
     <button id="estop" class="estop">&#9940; EMERGENCY DISABLE</button>
@@ -244,6 +255,17 @@ async function tick() {
   const en = d.motors_enabled, estop = document.getElementById("estop"), reen = document.getElementById("reenable");
   if (en === false) { estop.textContent = "MOTORS DISABLED"; estop.classList.add("off"); reen.style.display = ""; }
   else if (en === true) { estop.innerHTML = "&#9940; EMERGENCY DISABLE"; estop.classList.remove("off"); reen.style.display = "none"; }
+
+  const cam = d.camera || {}, cdot = document.getElementById("camdot");
+  const cimg = document.getElementById("cam"), coff = document.getElementById("camoff");
+  cdot.className = cam.ok ? "dot live" : "dot";
+  document.getElementById("camstate").textContent = cam.ok ? (cam.desc || "live") : (cam.error || "offline");
+  if (cam.ok) {
+    coff.style.display = "none"; cimg.style.display = "";
+    if (!cimg.src) cimg.src = "/camera";        // start the MJPEG stream once
+  } else {
+    cimg.style.display = "none"; cimg.removeAttribute("src"); coff.style.display = "";
+  }
 }
 
 async function post(path, body) {
