@@ -71,6 +71,7 @@ def make_handler(ctrl, camera):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")     # always serve fresh HTML/JSON
             self.end_headers()
             self.wfile.write(data)
 

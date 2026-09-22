@@ -125,8 +125,13 @@ PAGE = """<!doctype html><html lang="en"><head>
   .dot { width: 10px; height: 10px; border-radius: 50%; background: #6e7681; }
   .dot.live { background: #3fb950; box-shadow: 0 0 8px #3fb950; }
   .joints { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .cammain { display: flex; gap: 16px; align-items: flex-start; margin-top: 12px; flex-wrap: wrap; }
+  .camcol { flex: 0 0 auto; }
+  .ctrlcol { flex: 1 1 300px; min-width: 240px; display: flex; flex-direction: column; gap: 12px; }
+  .controls.vert { flex-direction: column; align-items: stretch; margin-top: 0; }
+  .controls.vert button { width: 100%; }
   .camwrap { position: relative; background: #0d1117; border: 1px solid #21262d;
-             border-radius: 14px; overflow: hidden; aspect-ratio: 1/1; max-width: 300px; }
+             border-radius: 14px; overflow: hidden; aspect-ratio: 1/1; width: 300px; max-width: 42vw; }
   .cam { width: 100%; height: 100%; object-fit: contain; display: block; }
   .camoff { position: absolute; inset: 0; display: flex; align-items: center;
             justify-content: center; color: #6e7681; font-size: 15px; }
@@ -176,29 +181,32 @@ PAGE = """<!doctype html><html lang="en"><head>
   <div class="section"><span class="dot" id="armdot"></span>Robot Arm <span id="armstate" class="idle" style="font-size:13px"></span></div>
   <div class="joints" id="joints"></div>
 
-  <div class="section"><span class="dot" id="camdot"></span>Camera <span id="camstate" class="idle" style="font-size:13px"></span></div>
-  <div class="camwrap">
-    <img id="cam" class="cam" alt="camera feed">
-    <div id="camoff" class="camoff">camera offline</div>
-  </div>
-
-  <div class="controls">
-    <button id="estop" class="estop">&#9940; EMERGENCY DISABLE</button>
-    <button id="reenable" class="reenable" style="display:none">Re-enable motors</button>
-    <button id="gozero" class="sys go">&#8617; Return to zero</button>
-    <button id="zero" class="sys">&#9678; Set zero here</button>
-    <span class="spacer"></span>
-    <button id="desktop" class="sys">&#128421; Desktop</button>
-    <button id="reboot" class="sys">&#8635; Reboot</button>
-    <button id="poweroff" class="sys danger">&#9099; Power off</button>
-  </div>
-
-  <details class="settings">
-    <summary>&#9881; Settings</summary>
-    <div class="controls">
-      <button id="home" class="sys">&#8962; Home axes (seek switches)</button>
+  <div class="cammain">
+    <div class="camcol">
+      <div class="section"><span class="dot" id="camdot"></span>Camera <span id="camstate" class="idle" style="font-size:13px"></span></div>
+      <div class="camwrap">
+        <img id="cam" class="cam" alt="camera feed">
+        <div id="camoff" class="camoff">camera offline</div>
+      </div>
     </div>
-  </details>
+    <div class="ctrlcol">
+      <div class="controls vert">
+        <button id="estop" class="estop">&#9940; EMERGENCY DISABLE</button>
+        <button id="reenable" class="reenable" style="display:none">Re-enable motors</button>
+        <button id="gozero" class="sys go">&#8617; Return to zero</button>
+        <button id="zero" class="sys">&#9678; Set zero here</button>
+        <button id="desktop" class="sys">&#128421; Desktop</button>
+        <button id="reboot" class="sys">&#8635; Reboot</button>
+        <button id="poweroff" class="sys danger">&#9099; Power off</button>
+      </div>
+      <details class="settings">
+        <summary>&#9881; Settings</summary>
+        <div class="controls vert">
+          <button id="home" class="sys">&#8962; Home axes (seek switches)</button>
+        </div>
+      </details>
+    </div>
+  </div>
 
 <script>
 const cls = (v, warn, bad) => v == null ? "" : v >= bad ? "bad" : v >= warn ? "warn" : "ok";
