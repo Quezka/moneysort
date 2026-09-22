@@ -47,11 +47,16 @@ class Camera:
         if not _LIBS:
             self.error = f"camera libs missing ({_IMPORT_ERR})"
             return
-        try:
-            self._open()
-        except Exception as e:
-            self.error = f"camera unavailable: {e}"
-            return
+        deadline = time.time() + 8.0             # tolerate the device being briefly busy
+        while True:                              # (old daemon releasing it on restart)
+            try:
+                self._open()
+                break
+            except Exception as e:
+                if "no RealSense device" in str(e) or time.time() > deadline:
+                    self.error = f"camera unavailable: {e}"
+                    return
+                time.sleep(1.0)
         self._run = True
         threading.Thread(target=self._loop, daemon=True).start()
         self.ok = True

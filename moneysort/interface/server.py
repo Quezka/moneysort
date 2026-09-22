@@ -27,6 +27,7 @@ HTTP client rather than a direct-GPIO script.
 import json
 import signal
 import socket
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -169,8 +170,14 @@ def main():
     camera = Camera()                            # graceful if no device/libs
     print("camera:", camera.desc if camera.ok else f"off ({camera.error})")
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), make_handler(ctrl, camera))
-    signal.signal(signal.SIGTERM, lambda *_: srv.shutdown())
-    signal.signal(signal.SIGINT, lambda *_: srv.shutdown())
+    srv.daemon_threads = True                    # don't let MJPEG streams block exit
+
+    def shutdown(*_):
+        camera.close()                           # release the device promptly on stop
+        threading.Thread(target=srv.shutdown, daemon=True).start()   # from ANOTHER thread
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
     print(f"armd on http://{dashboard.ip_addr()}:{PORT}  (owns arm + camera, latched e-stop)")
     try:
         srv.serve_forever()
