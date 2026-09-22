@@ -90,6 +90,12 @@ def make_handler(ctrl, camera):
                     self._send(json.dumps({"error": camera.error or "no frame"}), code=503)
                 else:
                     self._send(jpg, "image/jpeg")
+            elif self.path.startswith("/detected"):        # annotated frame (JPEG)
+                _, jpg = camera.detect() if camera.ok else ([], None)
+                if jpg is None:
+                    self._send(json.dumps({"error": camera.error or "no frame"}), code=503)
+                else:
+                    self._send(jpg, "image/jpeg")
             else:
                 self._send(dashboard.PAGE, "text/html; charset=utf-8")
 
