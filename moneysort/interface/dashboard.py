@@ -92,9 +92,10 @@ def system_action(action):
 
 
 def exit_kiosk():
-    """Close the fullscreen Chromium kiosk, returning to the labwc desktop."""
+    """Close the fullscreen kiosk (cog or Chromium), returning to the desktop."""
     try:
         subprocess.Popen(["pkill", "-f", "chromium"])
+        subprocess.Popen(["pkill", "-x", "cog"])
         return True
     except OSError:
         return False
@@ -127,13 +128,13 @@ PAGE = """<!doctype html><html lang="en"><head>
   .joints { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   .cammain { display: flex; gap: 14px; align-items: flex-start; margin-top: 4px; flex-wrap: wrap; }
   .camcol { flex: 0 0 auto; }
-  .ctrlcol { flex: 0 0 220px; display: flex; flex-direction: column; gap: 8px; }
+  .ctrlcol { flex: 0 0 220px; margin-left: auto; display: flex; flex-direction: column; gap: 8px; }
   .controls.vert { flex-direction: column; align-items: stretch; margin-top: 0; gap: 8px; }
   .controls.vert button { width: 100%; }
   .controls.vert .estop { font-size: 15px; padding: 11px 12px; letter-spacing: .5px; }
   .controls.vert .sys, .controls.vert .reenable { font-size: 14px; padding: 9px 12px; }
   .camwrap { position: relative; background: #0d1117; border: 1px solid #21262d;
-             border-radius: 14px; overflow: hidden; aspect-ratio: 1/1; width: 260px; max-width: 42vw; }
+             border-radius: 14px; overflow: hidden; aspect-ratio: 1/1; width: 340px; max-width: 46vw; }
   .cam { width: 100%; height: 100%; object-fit: contain; display: block; }
   .camoff { position: absolute; inset: 0; display: flex; align-items: center;
             justify-content: center; color: #6e7681; font-size: 15px; }
@@ -273,12 +274,8 @@ async function tick() {
   const cimg = document.getElementById("cam"), coff = document.getElementById("camoff");
   cdot.className = cam.ok ? "dot live" : "dot";
   document.getElementById("camstate").textContent = cam.ok ? (cam.desc || "live") : (cam.error || "offline");
-  if (cam.ok) {
-    coff.style.display = "none"; cimg.style.display = "";
-    if (!cimg.src) cimg.src = "/camera?detect=1";   // annotated MJPEG stream (coins circled)
-  } else {
-    cimg.style.display = "none"; cimg.removeAttribute("src"); coff.style.display = "";
-  }
+  if (cam.ok) { coff.style.display = "none"; cimg.style.display = ""; }   // pollCam sets the image
+  else { cimg.style.display = "none"; coff.style.display = ""; }
 }
 
 async function post(path, body) {
@@ -335,4 +332,21 @@ document.getElementById("desktop").onclick = () => { toast("Exiting to desktop�
 document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?")) { toast("Rebooting…", "warn", 8000); post("/reboot"); } };
 document.getElementById("poweroff").onclick = () => { if (confirm("Power OFF the Pi?")) { toast("Powering off…", "warn", 8000); post("/poweroff"); } };
 tick(); setInterval(tick, 1500);
+
+// Poll the annotated frame (works on WebKit/cog where MJPEG <img> doesn't).
+let camUrl = null, camBusy = false;
+async function pollCam() {
+  if (camBusy || !last.camera || !last.camera.ok) return;
+  camBusy = true;
+  try {
+    const r = await fetch("/detected?t=" + Date.now());
+    if (r.ok) {
+      const url = URL.createObjectURL(await r.blob());
+      const img = document.getElementById("cam");
+      img.onload = img.onerror = () => { if (camUrl) URL.revokeObjectURL(camUrl); camUrl = url; };
+      img.src = url;
+    }
+  } catch {} finally { camBusy = false; }
+}
+setInterval(pollCam, 250);   // ~4 fps
 </script></body></html>"""
