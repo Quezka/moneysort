@@ -23,13 +23,23 @@ except ImportError as e:                 # noqa: F841 -- reported via Camera.err
     _LIBS = False
     _IMPORT_ERR = str(e)
 
-# (depth w,h,fps), (colour w,h,fps) -- USB3 first, then USB2-friendly for the feed
+# (depth w,h,fps), (colour w,h,fps). USB2 can't sustain colour 640@15 continuously
+# (the colour stream stalls while depth keeps flowing), so use low fps -- the feed
+# only polls a few fps anyway. USB3 first, then USB2-safe.
 USB3 = [((640, 480, 30), (640, 480, 30))]
-USB2 = [((480, 270, 15), (640, 480, 15)),
-        ((480, 270, 15), (424, 240, 15)),
-        ((480, 270, 6),  (424, 240, 6))]
+USB2 = [((480, 270, 6), (640, 480, 6)),
+        ((480, 270, 6), (424, 240, 6)),
+        ((480, 270, 15), (424, 240, 15))]
 
 JPEG_Q = 70
+
+# Colour tuning. Auto-WB is fine but needs time to settle -- a too-short warm-up
+# locks it on a bad (often warm) value, and it re-does that on every reconnect.
+# If auto still lands wrong for your lighting, set AUTO_WB=False and tune
+# WHITE_BALANCE (Kelvin; lower = warmer correction).
+AUTO_WB = True
+WHITE_BALANCE = 4600
+WARMUP_FRAMES = 30
 
 
 class Camera:
@@ -89,7 +99,8 @@ class Camera:
             cfg.enable_stream(rs.stream.color, cw, ch, rs.format.bgr8, cfps)
             try:
                 profile = pipe.start(cfg)
-                for _ in range(10):
+                self._tune_color(profile)
+                for _ in range(WARMUP_FRAMES):       # let auto-exposure + WB settle
                     pipe.wait_for_frames(2000)
                 self._pipe = pipe
                 self._align = rs.align(rs.stream.color)
@@ -104,6 +115,19 @@ class Camera:
                     pass
                 time.sleep(0.5)
         raise RuntimeError(f"no stream config held ({last})")
+
+    def _tune_color(self, profile):
+        """Set colour white-balance/exposure so it's consistent across reconnects."""
+        try:
+            cs = profile.get_device().first_color_sensor()
+            if cs.supports(rs.option.enable_auto_exposure):
+                cs.set_option(rs.option.enable_auto_exposure, 1)
+            if cs.supports(rs.option.enable_auto_white_balance):
+                cs.set_option(rs.option.enable_auto_white_balance, 1 if AUTO_WB else 0)
+            if not AUTO_WB and cs.supports(rs.option.white_balance):
+                cs.set_option(rs.option.white_balance, float(WHITE_BALANCE))
+        except Exception:
+            pass
 
     def _capture(self):
         fails = 0
