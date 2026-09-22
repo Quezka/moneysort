@@ -41,6 +41,7 @@ class Camera:
         self._color = None
         self._depth = None
         self._intr = None
+        self._depth_scale = 1.0
         self._pipe = None
         self._align = None
         self._run = True
@@ -87,11 +88,12 @@ class Camera:
             cfg.enable_stream(rs.stream.depth, dw, dh, rs.format.z16, dfps)
             cfg.enable_stream(rs.stream.color, cw, ch, rs.format.bgr8, cfps)
             try:
-                pipe.start(cfg)
+                profile = pipe.start(cfg)
                 for _ in range(10):
                     pipe.wait_for_frames(2000)
                 self._pipe = pipe
                 self._align = rs.align(rs.stream.color)
+                self._depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()
                 self.desc = f"colour {cw}x{ch}@{cfps} ({'USB3' if usb3 else 'USB2'})"
                 return
             except RuntimeError as e:
@@ -112,10 +114,13 @@ class Camera:
                 color = frames.get_color_frame()
                 if not depth or not color:
                     continue
-                img = np.asanyarray(color.get_data())
+                # COPY into plain arrays -- holding pyrealsense frames/views starves
+                # the frame pool and freezes the stream. intrinsics is a value copy.
+                img = np.array(color.get_data())                 # BGR
+                dep = np.array(depth.get_data())                 # uint16 HxW
                 intr = depth.profile.as_video_stream_profile().intrinsics
                 with self._lock:
-                    self._color, self._depth, self._intr = img, depth, intr
+                    self._color, self._depth, self._intr = img, dep, intr
                 fails = 0
             except RuntimeError:
                 fails += 1
@@ -137,16 +142,21 @@ class Camera:
 
     def detect(self, **params):
         """Detect coins on the latest frame -> (coins, annotated_jpeg)."""
-        with self._lock:
+        with self._lock:                              # grab copies, then work unlocked
             if self._color is None:
                 return [], None
             img = self._color.copy()
-            depth, intr = self._depth, self._intr
-            coins, annotated = vision.detect_coins(
-                img,
-                lambda x, y: depth.get_distance(x, y),
-                lambda x, y, d: rs.rs2_deproject_pixel_to_point(intr, [x, y], d),
-                **params)
+            depth, intr, scale = self._depth, self._intr, self._depth_scale
+
+        def depth_at(x, y):
+            if 0 <= y < depth.shape[0] and 0 <= x < depth.shape[1]:
+                return float(depth[y, x]) * scale     # z16 counts -> metres
+            return 0.0
+
+        coins, annotated = vision.detect_coins(
+            img, depth_at,
+            lambda x, y, d: rs.rs2_deproject_pixel_to_point(intr, [x, y], d),
+            **params)
         return coins, self._encode(annotated)
 
     def close(self):
