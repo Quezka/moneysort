@@ -39,38 +39,8 @@ grep -v 'kiosk\.sh' "$AUTOSTART" > "$AUTOSTART.tmp" 2>/dev/null || true
 mv "$AUTOSTART.tmp" "$AUTOSTART"
 echo "bash $DIR/kiosk.sh &" >> "$AUTOSTART"
 
-# Make labwc fullscreen the cog kiosk. cog's Wayland platform has no fullscreen
-# switch, so the compositor does it via a window rule matching cog's app-id
-# (com.igalia.Cog). Merge the rule into rc.xml, preserving any existing content
-# (e.g. the touchscreen mapping); idempotent. NOTE: window rules apply when a
-# window MAPS, and restarting cog alone doesn't reload labwc -- so this reloads
-# labwc, and the kiosk shows fullscreen on its next launch (reboot, or re-open
-# via the Desktop launcher).
-echo "Ensuring labwc fullscreens the cog kiosk ..."
-RC="$HOME/.config/labwc/rc.xml"
-python3 - "$RC" <<'PY'
-import os, sys
-rc = sys.argv[1]
-RULE = ("  <windowRules>\n"
-        "    <!-- Money Sorter kiosk: fullscreen the cog browser when it maps -->\n"
-        "    <windowRule identifier=\"com.igalia.Cog\">\n"
-        "      <action name=\"ToggleFullscreen\"/>\n"
-        "    </windowRule>\n"
-        "  </windowRules>\n")
-skeleton = ('<?xml version="1.0"?>\n'
-            '<openbox_config xmlns="http://openbox.org/3.4/rc">\n'
-            '</openbox_config>\n')
-s = open(rc).read() if os.path.exists(rc) else skeleton
-if "com.igalia.Cog" in s:
-    print("  rc.xml already has the cog fullscreen rule")
-elif "</openbox_config>" in s:
-    os.makedirs(os.path.dirname(rc), exist_ok=True)
-    open(rc, "w").write(s.replace("</openbox_config>", RULE + "</openbox_config>"))
-    print("  added cog fullscreen windowRule to rc.xml")
-else:                                   # unrecognisable rc.xml -- don't clobber it
-    print("  WARNING: rc.xml has no </openbox_config>; add the windowRule by hand")
-PY
-killall -SIGHUP labwc 2>/dev/null && echo "  reloaded labwc config" || true
+# cog fullscreen is handled in kiosk.sh (COG_PLATFORM_WL_VIEW_FULLSCREEN=1), so
+# nothing to configure here.
 
 # Desktop + menu launcher to re-open the kiosk after "Exit to Desktop".
 echo "Installing desktop launcher ..."

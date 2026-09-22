@@ -17,11 +17,11 @@ for i in $(seq 1 30); do
 done
 
 if command -v cog >/dev/null 2>&1; then
-    # cog is a kiosk browser: one view, no chrome. Its Wayland platform plugin
-    # has no fullscreen switch (-O fullscreen=true is silently ignored), so the
-    # compositor does it: deploy/setup.sh adds a labwc window rule
-    #   <windowRule identifier="com.igalia.Cog"><action name="ToggleFullscreen"/>
-    # that fullscreens cog when its window maps (identifier = cog's app-id).
+    # cog is a kiosk browser: one view, no chrome. Its Wayland platform has no
+    # command-line fullscreen switch (-O fullscreen=true is silently ignored) --
+    # it fullscreens via an env var, which makes cog ask the compositor
+    # (xdg_toplevel.set_fullscreen) to fullscreen on map.
+    export COG_PLATFORM_WL_VIEW_FULLSCREEN=1
     exec cog "$URL"
 else
     exec chromium \
