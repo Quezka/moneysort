@@ -17,10 +17,11 @@ for i in $(seq 1 30); do
 done
 
 if command -v cog >/dev/null 2>&1; then
-    # cog is a kiosk browser: one fullscreen view, no chrome, auto-detects the
-    # Wayland compositor (labwc). If your build doesn't go fullscreen, try
-    #   cog -O fullscreen=true "$URL"   or add a labwc window rule.
-    exec cog "$URL"
+    # cog is a kiosk browser: one view, no chrome. -O fullscreen=true asks the
+    # Wayland platform plugin to open fullscreen (cog 0.18+). If a build ignores
+    # it, add a labwc window rule (<windowRule identifier="cog"><action
+    # name="ToggleFullscreen"/></windowRule>) as a fallback.
+    exec cog -O fullscreen=true "$URL"
 else
     exec chromium \
         --kiosk --app="$URL" \
