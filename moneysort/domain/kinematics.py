@@ -32,6 +32,7 @@ V_OFFSET_MM = 168.2    # D   (base-plate -> effective vertical zero)
 # --- joint limits (degrees) -----------------------------------------------
 Y_MIN, Y_MAX = 0.0, 90.0
 X_MIN, X_MAX = -90.0, 0.0
+Z_MIN, Z_MAX = -180.0, 180.0     # base yaw: half a turn each way from zero
 
 
 class OutOfReach(ValueError):
@@ -73,6 +74,8 @@ def inverse(target, check_limits=True):
     Raises OutOfReach if the point is beyond the links or outside the ranges.
     """
     z = math.degrees(math.atan2(target.y, target.x))
+    if check_limits and not (Z_MIN - 1e-4 <= z <= Z_MAX + 1e-4):
+        raise OutOfReach(f"base yaw {z:.1f} out of range [{Z_MIN}, {Z_MAX}]")
     r = math.hypot(target.x, target.y)
     A = r - TOOL_REACH_MM
     B = target.z - V_OFFSET_MM

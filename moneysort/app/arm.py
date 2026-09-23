@@ -43,13 +43,20 @@ class Arm:
             if "home_pin" in c:
                 lgpio.gpio_claim_input(self.h, c["home_pin"], lgpio.SET_PULL_UP)
                 self.home_pins[name] = c["home_pin"]
-        # Soft travel limits (enforced only once an axis is homed). Home sits at
-        # position 0; the usable range extends opposite the home direction.
+        # Travel limits, in steps. Two kinds:
+        #  - switch-homed axes (x, y): one-sided from the switch (position 0),
+        #    extending opposite the home direction; enforced only once homed.
+        #  - switch-less axes (z): a symmetric hard limit +/-limit_deg around the
+        #    power-on / zeroed position; always enforced (there's no switch to
+        #    home against, so its zero reference is the only one it has).
         self._limits = {}
         for name, c in joints.items():
             t = c.get("travel")
             if t:
                 self._limits[name] = (0, t) if c.get("home_dir", -1) < 0 else (-t, 0)
+            elif c.get("limit_deg"):
+                span = round(c["limit_deg"] / 360.0 * c["steps_per_rev"])
+                self._limits[name] = (-span, span)
         self.homed = set()
 
     # --- shared enable ----------------------------------------------------
@@ -80,9 +87,17 @@ class Arm:
         return self.motors[name]
 
     def _clamp_steps(self, name, steps):
-        """Trim `steps` so a homed, travel-limited axis can't overtravel."""
+        """Trim `steps` so a travel-limited axis can't overtravel.
+
+        A switch-homed axis (x, y) enforces its limit only once homed -- before
+        that its position isn't tied to a real reference. A switch-less axis (z)
+        has no switch, so its limit is a hard bound around its zero reference and
+        is always on.
+        """
         lim = self._limits.get(name)
-        if lim is None or name not in self.homed:
+        if lim is None:
+            return steps
+        if name in self.home_pins and name not in self.homed:
             return steps
         lo, hi = lim
         pos = self.motors[name].position
