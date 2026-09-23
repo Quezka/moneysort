@@ -16,12 +16,15 @@ TTY -- an interactive SSH session is fine; a piped/non-tty stdin is not.
 """
 import json
 import math
+import os
 import sys
 import termios
 import tty
 import select
 import urllib.error
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root on path
 
 from moneysort.config import JOINTS, PORT
 from moneysort.domain import kinematics
