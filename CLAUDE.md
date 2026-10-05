@@ -48,6 +48,8 @@ the documented CLI paths don't change).
     GPIO for its lifetime (so the e-stop is latched). Serves dashboard + JSON API
     on **:8080** (binds `0.0.0.0`, reachable from any LAN PC).
   - `dashboard.py` — the HTML `PAGE` + stdlib system-metric helpers (no GPIO).
+    The page is in Italian; every on-screen string goes through `t()` with its Italian in the `IT`
+    table (add `?lang=en` to the address for English). Add both when adding UI text.
   - `cli.py` — CLI HTTP client (see `docs/USAGE.md`).
 - **`tests/`** — `python3 -m unittest discover tests` (pure domain; no hardware).
 - **`deploy/`** — `deploy.sh`, `setup.sh`, systemd unit, kiosk autostart.

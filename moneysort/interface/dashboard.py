@@ -102,7 +102,7 @@ def exit_kiosk():
 
 
 # --- page -------------------------------------------------------------------
-PAGE = """<!doctype html><html lang="en"><head>
+PAGE = """<!doctype html><html lang="it"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Money Sorter</title>
 <style>
@@ -181,37 +181,70 @@ PAGE = """<!doctype html><html lang="en"><head>
 
   <div class="grid" id="sys"></div>
 
-  <div class="section"><span class="dot" id="armdot"></span>Robot Arm <span id="armstate" class="idle" style="font-size:13px"></span></div>
+  <div class="section"><span class="dot" id="armdot"></span><span data-t>Robot Arm</span> <span id="armstate" class="idle" style="font-size:13px"></span></div>
   <div class="joints" id="joints"></div>
 
   <div class="cammain">
     <div class="camcol">
-      <div class="section"><span class="dot" id="camdot"></span>Camera <span id="camstate" class="idle" style="font-size:13px"></span></div>
+      <div class="section"><span class="dot" id="camdot"></span><span data-t>Camera</span> <span id="camstate" class="idle" style="font-size:13px"></span></div>
       <div class="camwrap">
-        <img id="cam" class="cam" alt="camera feed">
-        <div id="camoff" class="camoff">camera offline</div>
+        <img id="cam" class="cam" alt="">
+        <div id="camoff" class="camoff" data-t>camera offline</div>
       </div>
     </div>
     <div class="ctrlcol">
       <div class="controls vert">
-        <button id="estop" class="estop">&#9940; EMERGENCY DISABLE</button>
-        <button id="reenable" class="reenable" style="display:none">Re-enable motors</button>
-        <button id="gozero" class="sys go">&#8617; Return to zero</button>
-        <button id="zero" class="sys">&#9678; Set zero here</button>
-        <button id="desktop" class="sys">&#128421; Desktop</button>
-        <button id="reboot" class="sys">&#8635; Reboot</button>
-        <button id="poweroff" class="sys danger">&#9099; Power off</button>
+        <button id="estop" class="estop">&#9940; <span data-t>EMERGENCY DISABLE</span></button>
+        <button id="reenable" class="reenable" style="display:none" data-t>Re-enable motors</button>
+        <button id="gozero" class="sys go">&#8617; <span data-t>Return to zero</span></button>
+        <button id="zero" class="sys">&#9678; <span data-t>Set zero here</span></button>
+        <button id="desktop" class="sys">&#128421; <span data-t>Desktop</span></button>
+        <button id="reboot" class="sys">&#8635; <span data-t>Reboot</span></button>
+        <button id="poweroff" class="sys danger">&#9099; <span data-t>Power off</span></button>
       </div>
       <details class="settings">
-        <summary>&#9881; Settings</summary>
+        <summary>&#9881; <span data-t>Settings</span></summary>
         <div class="controls vert">
-          <button id="home" class="sys">&#8962; Home axes (seek switches)</button>
+          <button id="home" class="sys">&#8962; <span data-t>Home axes (seek switches)</span></button>
         </div>
       </details>
     </div>
   </div>
 
 <script>
+// The screen is in Italian; add ?lang=en to the address for English.
+const IT = {
+  "Robot Arm": "Braccio robotico", "Camera": "Fotocamera", "camera offline": "fotocamera offline",
+  "camera feed": "immagine della fotocamera",
+  "EMERGENCY DISABLE": "ARRESTO DI EMERGENZA", "Re-enable motors": "Riattiva i motori",
+  "Return to zero": "Torna a zero", "Set zero here": "Imposta zero qui", "Desktop": "Desktop",
+  "Reboot": "Riavvia", "Power off": "Spegni", "Settings": "Impostazioni",
+  "Home axes (seek switches)": "Azzera gli assi (cerca i finecorsa)",
+  "CPU Temp": "Temp. CPU", "CPU Load": "Carico CPU", "1-min average": "media a 1 min",
+  "Memory": "Memoria", "GB total": "GB totali", "Disk": "Disco", "Host": "Host", "Uptime": "Attivo da",
+  "MOVING": "IN MOVIMENTO", "idle": "fermo", "updated {n}s ago": "aggiornato {n} s fa",
+  "no data yet": "ancora nessun dato", "MOTORS DISABLED": "MOTORI DISATTIVATI",
+  "live": "attiva", "offline": "offline", "no connection to arm": "nessuna connessione con il braccio",
+  "Emergency stop — motors disabled": "Arresto di emergenza — motori disattivati",
+  "Motors re-enabled": "Motori riattivati", "Re-enable failed": "Riattivazione non riuscita",
+  "Motors are disabled — re-enable first": "I motori sono disattivati — riattivali prima",
+  "Already at zero": "Già a zero", "Returning to zero…": "Ritorno a zero…",
+  "Return failed": "Ritorno non riuscito", "Back at zero": "Tornato a zero",
+  "Set current position as zero (new home reference)?": "Impostare la posizione attuale come zero (nuovo riferimento di origine)?",
+  "Zero set at current position": "Zero impostato nella posizione attuale",
+  "Failed to set zero": "Impossibile impostare lo zero",
+  "Home all axes? X and Y seek their switches; Z returns to zero.": "Azzerare tutti gli assi? X e Y cercano i finecorsa; Z torna a zero.",
+  "Homing axes…": "Azzeramento degli assi…", "Homing failed": "Azzeramento non riuscito",
+  "Homing complete": "Azzeramento completato", "Exiting to desktop…": "Uscita al desktop…",
+  "Reboot the Pi?": "Riavviare il Pi?", "Rebooting…": "Riavvio…",
+  "Power OFF the Pi?": "Spegnere il Pi?", "Powering off…": "Spegnimento…",
+};
+const LANG = new URLSearchParams(location.search).get("lang") || "it";
+const t = s => (LANG === "it" && IT[s]) || s;
+document.documentElement.lang = LANG === "it" ? "it" : "en";
+document.querySelectorAll("[data-t]").forEach(e => { e.textContent = t(e.textContent.trim()); });
+document.getElementById("cam").alt = t("camera feed");
+
 const cls = (v, warn, bad) => v == null ? "" : v >= bad ? "bad" : v >= warn ? "warn" : "ok";
 const card = (label, value, unit, sub, klass="") =>
   `<div class="card"><div class="label">${label}</div>
@@ -240,19 +273,19 @@ async function tick() {
   document.getElementById("clock").textContent = d.time;
 
   document.getElementById("sys").innerHTML =
-    card("CPU Temp", d.temp, "&deg;C", "", cls(d.temp, 65, 80)) +
-    card("CPU Load", d.load, "", "1-min average") +
-    card("Memory", d.mem_pct, "%", (d.mem_total||"?")+" GB total", cls(d.mem_pct, 75, 90)) +
-    card("Disk", d.disk_pct, "%", (d.disk_total||"?")+" GB total", cls(d.disk_pct, 80, 92)) +
-    card("Host", d.host, "", d.ip) +
-    card("Uptime", d.uptime, "", "");
+    card(t("CPU Temp"), d.temp, "&deg;C", "", cls(d.temp, 65, 80)) +
+    card(t("CPU Load"), d.load, "", t("1-min average")) +
+    card(t("Memory"), d.mem_pct, "%", (d.mem_total||"?")+" "+t("GB total"), cls(d.mem_pct, 75, 90)) +
+    card(t("Disk"), d.disk_pct, "%", (d.disk_total||"?")+" "+t("GB total"), cls(d.disk_pct, 80, 92)) +
+    card(t("Host"), d.host, "", d.ip) +
+    card(t("Uptime"), d.uptime, "", "");
 
   const a = d.arm, dot = document.getElementById("armdot"), st = document.getElementById("armstate");
   const names = ["x", "y", "z"];
   if (a) {
     dot.className = a.moving ? "dot live" : "dot";
-    const age = a._age != null ? `updated ${a._age}s ago` : "";
-    st.textContent = a.moving ? "MOVING" : ("idle · " + age);
+    const age = a._age != null ? t("updated {n}s ago").replace("{n}", a._age) : "";
+    st.textContent = a.moving ? t("MOVING") : (t("idle") + " · " + age);
     st.className = a.moving ? "moving" : "idle";
     document.getElementById("joints").innerHTML = names.map(n =>
       `<div class="card joint"><div class="label">${n}</div>
@@ -260,20 +293,20 @@ async function tick() {
     ).join("");
   } else {
     dot.className = "dot";
-    st.textContent = "no data yet";
+    st.textContent = t("no data yet");
     document.getElementById("joints").innerHTML = names.map(n =>
       `<div class="card joint"><div class="label">${n}</div><div class="value idle">&mdash;<span class="unit">&deg;</span></div></div>`
     ).join("");
   }
 
   const en = d.motors_enabled, estop = document.getElementById("estop"), reen = document.getElementById("reenable");
-  if (en === false) { estop.textContent = "MOTORS DISABLED"; estop.classList.add("off"); reen.style.display = ""; }
-  else if (en === true) { estop.innerHTML = "&#9940; EMERGENCY DISABLE"; estop.classList.remove("off"); reen.style.display = "none"; }
+  if (en === false) { estop.textContent = t("MOTORS DISABLED"); estop.classList.add("off"); reen.style.display = ""; }
+  else if (en === true) { estop.innerHTML = "&#9940; " + t("EMERGENCY DISABLE"); estop.classList.remove("off"); reen.style.display = "none"; }
 
   const cam = d.camera || {}, cdot = document.getElementById("camdot");
   const cimg = document.getElementById("cam"), coff = document.getElementById("camoff");
   cdot.className = cam.ok ? "dot live" : "dot";
-  document.getElementById("camstate").textContent = cam.ok ? (cam.desc || "live") : (cam.error || "offline");
+  document.getElementById("camstate").textContent = cam.ok ? (cam.desc || t("live")) : (cam.error || t("offline"));
   if (cam.ok) { coff.style.display = "none"; cimg.style.display = ""; }   // pollCam sets the image
   else { cimg.style.display = "none"; coff.style.display = ""; }
 }
@@ -287,7 +320,7 @@ async function post(path, body) {
     });
     let j = {}; try { j = await r.json(); } catch {}
     return { ok: r.ok && j.ok !== false, ...j };
-  } catch { return { ok: false, error: "no connection to arm" }; }
+  } catch { return { ok: false, error: t("no connection to arm") }; }
 }
 
 const atZero = () => last.arm && last.arm.joints &&
@@ -295,42 +328,42 @@ const atZero = () => last.arm && last.arm.joints &&
 
 document.getElementById("estop").onclick = async () => {
   await post("/disable");
-  toast("Emergency stop — motors disabled", "warn");
+  toast(t("Emergency stop — motors disabled"), "warn");
   tick();
 };
 document.getElementById("reenable").onclick = async () => {
   const r = await post("/enable");
-  toast(r.ok ? "Motors re-enabled" : (r.error || "Re-enable failed"), r.ok ? "success" : "error");
+  toast(r.ok ? t("Motors re-enabled") : (r.error || t("Re-enable failed")), r.ok ? "success" : "error");
   tick();
 };
 document.getElementById("gozero").onclick = async () => {
-  if (last.estopped) { toast("Motors are disabled — re-enable first", "warn"); return; }
-  if (atZero()) { toast("Already at zero", "info"); return; }
-  toast("Returning to zero…", "info");
+  if (last.estopped) { toast(t("Motors are disabled — re-enable first"), "warn"); return; }
+  if (atZero()) { toast(t("Already at zero"), "info"); return; }
+  toast(t("Returning to zero…"), "info");
   const r = await post("/return_zero");
-  if (!r.ok) toast(r.error || "Return failed", "error");
-  else if (!r.estopped) toast("Back at zero", "success");
+  if (!r.ok) toast(r.error || t("Return failed"), "error");
+  else if (!r.estopped) toast(t("Back at zero"), "success");
   tick();
 };
 document.getElementById("zero").onclick = async () => {
-  if (!confirm("Set current position as zero (new home reference)?")) return;
+  if (!confirm(t("Set current position as zero (new home reference)?"))) return;
   const r = await post("/zero");
-  toast(r.ok ? "Zero set at current position" : (r.error || "Failed to set zero"),
+  toast(r.ok ? t("Zero set at current position") : (r.error || t("Failed to set zero")),
         r.ok ? "success" : "error");
   tick();
 };
 document.getElementById("home").onclick = async () => {
-  if (last.estopped) { toast("Motors are disabled — re-enable first", "warn"); return; }
-  if (!confirm("Home all axes? X and Y seek their switches; Z returns to zero.")) return;
-  toast("Homing axes…", "info", 5000);
+  if (last.estopped) { toast(t("Motors are disabled — re-enable first"), "warn"); return; }
+  if (!confirm(t("Home all axes? X and Y seek their switches; Z returns to zero."))) return;
+  toast(t("Homing axes…"), "info", 5000);
   const r = await post("/home");
-  if (!r.ok) toast(r.error || "Homing failed", "error");
-  else if (!r.estopped) toast("Homing complete", "success");
+  if (!r.ok) toast(r.error || t("Homing failed"), "error");
+  else if (!r.estopped) toast(t("Homing complete"), "success");
   tick();
 };
-document.getElementById("desktop").onclick = () => { toast("Exiting to desktop…", "info"); post("/kiosk-exit"); };
-document.getElementById("reboot").onclick = () => { if (confirm("Reboot the Pi?")) { toast("Rebooting…", "warn", 8000); post("/reboot"); } };
-document.getElementById("poweroff").onclick = () => { if (confirm("Power OFF the Pi?")) { toast("Powering off…", "warn", 8000); post("/poweroff"); } };
+document.getElementById("desktop").onclick = () => { toast(t("Exiting to desktop…"), "info"); post("/kiosk-exit"); };
+document.getElementById("reboot").onclick = () => { if (confirm(t("Reboot the Pi?"))) { toast(t("Rebooting…"), "warn", 8000); post("/reboot"); } };
+document.getElementById("poweroff").onclick = () => { if (confirm(t("Power OFF the Pi?"))) { toast(t("Powering off…"), "warn", 8000); post("/poweroff"); } };
 tick(); setInterval(tick, 1500);
 
 // Poll the annotated frame (works on WebKit/cog where MJPEG <img> doesn't).
