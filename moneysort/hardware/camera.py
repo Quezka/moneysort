@@ -164,6 +164,11 @@ class Camera:
             img = None if self._color is None else self._color.copy()
         return self._encode(img)
 
+    def frame_size(self):
+        """(width, height) of the latest colour frame, or None."""
+        with self._lock:
+            return None if self._color is None else (int(self._color.shape[1]), int(self._color.shape[0]))
+
     def detect(self, **params):
         """Detect coins on the latest frame -> (coins, annotated_jpeg)."""
         with self._lock:                              # grab copies, then work unlocked

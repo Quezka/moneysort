@@ -27,6 +27,7 @@ Runs as a systemd service (see deploy/). Jog with arm_test.py, which is now an
 HTTP client rather than a direct-GPIO script.
 """
 import json
+import logging
 import math
 import os
 import signal
@@ -35,13 +36,15 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from moneysort.config import PORT
+from moneysort.config import PORT, RETURN_ZERO_PPS, SHOULDER_MAX_DEG
 from moneysort.app.controller import ArmController
 from moneysort.domain import calibration
 from moneysort.domain import kinematics
 from moneysort.domain.kinematics import Point
 from moneysort.hardware.camera import Camera
 from moneysort.interface import dashboard   # metric helpers, PAGE, system_action
+
+log = logging.getLogger("armd")
 
 CALIB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "camera_calib.json")   # written by tools/calibrate_camera.py
@@ -58,7 +61,8 @@ def with_base(coins, joints):
     if not calib:
         return None, None
     for c in coins:
-        c["base_mm"] = calib.to_base(c["cam_mm"])
+        if c.get("cam_mm"):                            # none for coins closer than the depth range
+            c["base_mm"] = calib.to_base(c["cam_mm"])
     return calib, calib.at_survey(joints)
 
 
@@ -87,7 +91,7 @@ def build_status(ctrl, camera):
         "estopped": st["estopped"],
         "arm": {"joints": st["joints"], "moving": st["moving"],
                 "homed": st["homed"], "home": st["home"], "_age": 0.0,
-                "tip": tool_tip(st["joints"])},
+                "tip": tool_tip(st["joints"]), "debug": st["debug"]},
         "camera": {"ok": camera.ok, "desc": camera.desc, "error": camera.error,
                    "calibrated": os.path.exists(CALIB_PATH)},
         "build": BUILD,
@@ -111,12 +115,21 @@ def make_handler(ctrl, camera):
             self.end_headers()
             self.wfile.write(data)
 
+        def _peek(self):
+            """Request body for the log, without consuming it (BaseHTTPRequestHandler can't re-read)."""
+            if not hasattr(self, "_cached"):
+                n = int(self.headers.get("Content-Length", 0) or 0)
+                self._cached = self.rfile.read(n) if n else b""
+            return self._cached.decode("utf-8", "replace")[:200]
+
         def _body(self):
-            n = int(self.headers.get("Content-Length", 0) or 0)
-            if not n:
+            if not hasattr(self, "_cached"):
+                n = int(self.headers.get("Content-Length", 0) or 0)
+                self._cached = self.rfile.read(n) if n else b""
+            if not self._cached:
                 return {}
             try:
-                return json.loads(self.rfile.read(n) or b"{}")
+                return json.loads(self._cached or b"{}")
             except ValueError:
                 return {}
 
@@ -132,14 +145,15 @@ def make_handler(ctrl, camera):
                 else:
                     self._send(jpg, "image/jpeg")
             elif self.path.startswith("/detected"):        # annotated frame (JPEG)
-                coins, jpg = camera.detect() if camera.ok else ([], None)
+                coins, jpg = camera.detect(require_depth=False) if camera.ok else ([], None)
                 if jpg is None:
                     self._send(json.dumps({"error": camera.error or "no frame"}), code=503)
                 else:
                     _, at_survey = with_base(coins, ctrl.status()["joints"])
                     self._send(jpg, "image/jpeg", extra={"X-Coins": json.dumps(
                         {"at_survey": at_survey, "coins": [
-                            {"r": c["r"], "cam": c["cam_mm"], "base": c.get("base_mm")}
+                            {"r": c["r"], "cam": c["cam_mm"], "base": c.get("base_mm"),
+                             "depth": c["depth_ok"]}
                             for c in coins]})})
             else:
                 self._send(dashboard.PAGE, "text/html; charset=utf-8")
@@ -167,11 +181,14 @@ def make_handler(ctrl, camera):
                 pass                                       # client closed the stream
 
         def do_POST(self):
+            if not self.path.startswith(("/jog", "/detect")):       # 12 Hz heartbeats stay quiet
+                log.info("POST %s %s", self.path, self._peek())
             try:
                 if self.path.startswith("/detect"):
                     coins, _ = camera.detect(**self._body())
                     calib, at_survey = with_base(coins, ctrl.status()["joints"])
                     self._send(json.dumps({"ok": True, "coins": coins,
+                                           "frame": camera.frame_size(),
                                            "calibrated": calib is not None,
                                            "at_survey": at_survey}))
                     return
@@ -215,6 +232,7 @@ def make_handler(ctrl, camera):
                     self._send(json.dumps({"error": "not found"}), code=404)
                     return
             except Exception as e:                        # report back to client
+                ctrl.note_error(self.path, e)
                 self._send(json.dumps({"ok": False, "error": str(e)}), code=400)
                 return
             self._send(json.dumps({"ok": True, **ctrl.status()}))
@@ -223,7 +241,9 @@ def make_handler(ctrl, camera):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     ctrl = ArmController()
+    log.info("armd starting; shoulder limit %s deg, return-to-zero %s pps", SHOULDER_MAX_DEG, RETURN_ZERO_PPS)
     camera = Camera()                            # graceful if no device/libs
     print("camera:", camera.desc if camera.ok else f"off ({camera.error})")
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), make_handler(ctrl, camera))

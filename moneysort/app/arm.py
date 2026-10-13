@@ -7,6 +7,7 @@ Pins and calibration live in `moneysort.config.JOINTS` (see docs/PINOUT.md):
 Shared enable on GPIO26 (active-low). All '-' terminals bus to Pi GND.
 If a joint runs the wrong way, set "invert": True for it in JOINTS.
 """
+import logging
 import threading
 import time
 
@@ -15,6 +16,9 @@ import lgpio
 from moneysort.config import ENABLE_PIN, GPIOCHIP, JOINTS, RETURN_ZERO_PPS
 from moneysort.domain import kinematics
 from moneysort.hardware.stepper import Stepper
+
+
+log = logging.getLogger("armd.arm")
 
 
 class Arm:
@@ -86,7 +90,7 @@ class Arm:
     def __getitem__(self, name):
         return self.motors[name]
 
-    def _clamp_steps(self, name, steps):
+    def _clamp_steps(self, name, steps, quiet=False):
         """Trim `steps` so a travel-limited axis can't overtravel.
 
         A switch-homed axis (x, y) enforces its limit only once homed -- before
@@ -101,7 +105,17 @@ class Arm:
             return steps
         lo, hi = lim
         pos = self.motors[name].position
-        return max(lo, min(hi, pos + steps)) - pos
+        target = pos + steps
+        if pos > hi:                       # already outside (limit tightened / stalled):
+            target = min(target, pos)      # only inward moves, never snap back in one lurch
+        elif pos < lo:
+            target = max(target, pos)
+        else:
+            target = max(lo, min(hi, target))
+        if target - pos != steps and not quiet:
+            log.warning("limit: axis %s asked %+d steps at %d (limits %d..%d) -> allowed %+d",
+                        name, steps, pos, lo, hi, target - pos)
+        return target - pos
 
     def move(self, name, steps, max_pps=None):
         steps = self._clamp_steps(name, int(steps))
@@ -114,7 +128,7 @@ class Arm:
         so the caller can see an axis that hit its limit."""
         done = {}
         for name, n in steps.items():
-            n = self._clamp_steps(name, int(n))
+            n = self._clamp_steps(name, int(n), quiet=True)     # 25 Hz: the loop logs transitions
             done[name] = n
             self.motors[name].queue_slice(n, dt)
         return done

@@ -169,6 +169,17 @@ PAGE = """<!doctype html><html lang="it"><head>
   .settings > summary::-webkit-details-marker { display: none; }
   .settings[open] > summary { color: #c9d1d9; }
   .settings .controls { margin-top: 8px; }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none;
+           align-items: center; justify-content: center; z-index: 200; }
+  #modal.show { display: flex; }
+  .dialog { background: #161b22; border: 1px solid #30363d; border-radius: 16px; padding: 26px 30px;
+            width: min(560px, 90vw); box-shadow: 0 20px 60px rgba(0,0,0,.7); }
+  .dialog p { font-size: 20px; line-height: 1.35; margin-bottom: 22px; }
+  .dialog .row { display: flex; gap: 14px; }
+  .dialog button { flex: 1; font-size: 19px; padding: 16px 12px; }
+  .dialog .cancel { background: #30363d; box-shadow: 0 4px 0 #21262d; }
+  .dialog .okbtn { background: #1f6feb; box-shadow: 0 4px 0 #164a9e; }
+  .dialog .okbtn.danger { background: #da3633; box-shadow: 0 4px 0 #a5201d; }
   #toasts { position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
             display: flex; flex-direction: column; align-items: center; gap: 12px;
             z-index: 100; pointer-events: none; width: max-content; max-width: 92vw; }
@@ -186,6 +197,11 @@ PAGE = """<!doctype html><html lang="it"><head>
   .toast.error   { border-left-color: #f85149; background: #2c1919; } .toast.error   .ico { color: #f85149; }
 </style></head><body>
   <div id="toasts"></div>
+  <div id="modal"><div class="dialog">
+    <p id="modalmsg"></p>
+    <div class="row"><button id="modalcancel" class="cancel" data-t>Cancel</button>
+                     <button id="modalok" class="okbtn" data-t>Confirm</button></div>
+  </div></div>
   <header>
     <h1>Money<span>Sorter</span></h1>
     <div class="clock" id="clock">--:--:--</div>
@@ -195,6 +211,7 @@ PAGE = """<!doctype html><html lang="it"><head>
 
   <div class="section"><span class="dot" id="armdot"></span><span data-t>Robot Arm</span> <span id="armstate" class="idle" style="font-size:13px"></span></div>
   <div class="joints" id="joints"></div>
+  <div class="sub" id="lasterr" style="margin-top:4px"></div>
 
   <div class="cammain">
     <div class="camcol">
@@ -238,6 +255,7 @@ const IT = {
   "reach": "sbraccio", "homed": "azzerato", "not homed": "non azzerato",
   "no coins in view": "nessuna moneta inquadrata", "calibrated": "calibrata",
   "not calibrated": "non calibrata", "away from survey pose": "fuori dalla posa di rilievo",
+  "Cancel": "Annulla", "Confirm": "Conferma", "no depth": "senza profondità",
   "Robot Arm": "Braccio robotico", "Camera": "Fotocamera", "camera offline": "fotocamera offline",
   "camera feed": "immagine della fotocamera",
   "EMERGENCY DISABLE": "ARRESTO DI EMERGENZA", "Re-enable motors": "Riattiva i motori",
@@ -332,6 +350,10 @@ async function tick() {
     return `<span class="badge ${on ? "on" : "warn"}">${k.toUpperCase()} · ${on ? t("homed") : t("not homed")}</span>`;
   }).join("");
 
+  const le = a && a.debug && a.debug.last_error;
+  document.getElementById("lasterr").innerHTML = le
+    ? `<span class="warn">&#9888; ${le[0]} &middot; ${le[1]}: ${String(le[2]).replace(/</g, "&lt;")}</span>` : "";
+
   const en = d.motors_enabled, estop = document.getElementById("estop"), reen = document.getElementById("reenable");
   if (en === false) { estop.textContent = t("MOTORS DISABLED"); estop.classList.add("off"); reen.style.display = ""; }
   else if (en === true) { estop.innerHTML = "&#9940; " + t("EMERGENCY DISABLE"); estop.classList.remove("off"); reen.style.display = "none"; }
@@ -380,8 +402,22 @@ document.getElementById("gozero").onclick = async () => {
   else if (!r.estopped) toast(t("Back at zero"), "success");
   tick();
 };
+// In-page confirm: kiosk browsers (cog) don't show window.confirm(), so buttons using it did nothing.
+function ask(msg, danger = false) {
+  return new Promise(resolve => {
+    const m = document.getElementById("modal"), ok = document.getElementById("modalok"),
+          no = document.getElementById("modalcancel");
+    document.getElementById("modalmsg").textContent = msg;
+    ok.classList.toggle("danger", danger);
+    const done = v => { m.classList.remove("show"); ok.onclick = no.onclick = null; resolve(v); };
+    ok.onclick = () => done(true);
+    no.onclick = () => done(false);
+    m.classList.add("show");
+  });
+}
+
 document.getElementById("zero").onclick = async () => {
-  if (!confirm(t("Set current position as zero (new home reference)?"))) return;
+  if (!await ask(t("Set current position as zero (new home reference)?"))) return;
   const r = await post("/zero");
   toast(r.ok ? t("Zero set at current position") : (r.error || t("Failed to set zero")),
         r.ok ? "success" : "error");
@@ -389,7 +425,7 @@ document.getElementById("zero").onclick = async () => {
 };
 document.getElementById("home").onclick = async () => {
   if (last.estopped) { toast(t("Motors are disabled — re-enable first"), "warn"); return; }
-  if (!confirm(t("Home all axes? X and Y seek their switches; Z returns to zero."))) return;
+  if (!await ask(t("Home all axes? X and Y seek their switches; Z returns to zero."))) return;
   toast(t("Homing axes…"), "info", 5000);
   const r = await post("/home");
   if (!r.ok) toast(r.error || t("Homing failed"), "error");
@@ -397,8 +433,8 @@ document.getElementById("home").onclick = async () => {
   tick();
 };
 document.getElementById("desktop").onclick = () => { toast(t("Exiting to desktop…"), "info"); post("/kiosk-exit"); };
-document.getElementById("reboot").onclick = () => { if (confirm(t("Reboot the Pi?"))) { toast(t("Rebooting…"), "warn", 8000); post("/reboot"); } };
-document.getElementById("poweroff").onclick = () => { if (confirm(t("Power OFF the Pi?"))) { toast(t("Powering off…"), "warn", 8000); post("/poweroff"); } };
+document.getElementById("reboot").onclick = async () => { if (await ask(t("Reboot the Pi?"), true)) { toast(t("Rebooting…"), "warn", 8000); post("/reboot"); } };
+document.getElementById("poweroff").onclick = async () => { if (await ask(t("Power OFF the Pi?"), true)) { toast(t("Powering off…"), "warn", 8000); post("/poweroff"); } };
 tick(); setInterval(tick, 1500);
 
 function showCoins(hdr) {
@@ -409,7 +445,8 @@ function showCoins(hdr) {
   const away = c.at_survey === false ? `<div class="sub warn">${t("away from survey pose")}</div>` : "";
   box.innerHTML = c.coins.slice(0, 5).map((k, i) => {
     const p = k.base || k.cam, tag = k.base ? "" : " (cam)";
-    return `<div class="coin"><span>#${i + 1} &empty;${2 * k.r}px</span><span>${p.map(Math.round).join(", ")} mm${tag}</span></div>`;
+    const pos = p ? p.map(Math.round).join(", ") + " mm" + tag : t("no depth");
+    return `<div class="coin"><span>#${i + 1} &empty;${2 * k.r}px</span><span>${pos}</span></div>`;
   }).join("") + away;
 }
 

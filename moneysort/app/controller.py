@@ -3,12 +3,15 @@
 This is the application/use-case layer: it knows nothing about HTTP or the
 dashboard. The interface layer drives it; it drives the Arm.
 """
+import logging
 import threading
 import time
 
 from moneysort.app.arm import Arm
 from moneysort.domain import jog as jogmath
 from moneysort.domain.kinematics import JointAngles
+
+log = logging.getLogger("armd.ctrl")
 
 JOG_DT = 0.04            # s per jog slice
 JOG_LEAD = 0.012         # queue the next slice this early so the pulse train never starves
@@ -32,36 +35,53 @@ class ArmController:
         self._jog_arm_frame = False          # True: cart is (radial, tangential, up), not base X/Y/Z
         self._jog_deadline = 0.0
         self._jog_thread = None
+        self.last_error = None               # (hh:mm:ss, what, message) of the latest failure
 
-    def _run(self, fn):
+    def note_error(self, what, msg):
+        """Remember (and log) a rejected/failed request so /status can show why nothing moved."""
+        self.last_error = (time.strftime("%H:%M:%S"), what, str(msg))
+        log.warning("%s failed: %s", what, msg)
+
+    def _run(self, fn, what="move"):
         if self.estopped:
             raise RuntimeError("e-stopped: re-enable before moving")
+        if self._move_lock.locked():
+            log.info("%s waiting: another move holds the lock (jog thread alive: %s)",
+                     what, bool(self._jog_thread and self._jog_thread.is_alive()))
         with self._move_lock:
             self.moving = True
+            t0 = time.monotonic()
+            log.info("%s start", what)
             try:
                 fn()
+            except Exception as e:
+                self.note_error(what, e)
+                raise
             finally:
                 self.moving = False
+                log.info("%s end (%.2fs)%s", what, time.monotonic() - t0,
+                         " [ABORTED]" if self.arm.abort.is_set() else "")
 
     def move(self, axis, steps, pps=None):
         if axis not in self.arm.motors:
             raise KeyError(f"unknown axis {axis!r}")
-        self._run(lambda: self.arm.move(axis, int(steps), max_pps=pps))
+        self._run(lambda: self.arm.move(axis, int(steps), max_pps=pps), f"move {axis} {int(steps):+d}")
 
     def move_many(self, moves, pps=None):
         moves = {a: int(s) for a, s in moves.items() if a in self.arm.motors}
         if not moves:
             raise KeyError("no known axes in move")
-        self._run(lambda: self.arm.move_many(moves, max_pps=pps))
+        self._run(lambda: self.arm.move_many(moves, max_pps=pps), f"move_many {moves}")
 
     def home(self, pps=None):
-        self._run(lambda: self.arm.home_all(max_pps=pps))
+        self._run(lambda: self.arm.home_all(max_pps=pps), "home")
 
     def return_zero(self, pps=None):
-        self._run(lambda: self.arm.return_zero(max_pps=pps))
+        self._run(lambda: self.arm.return_zero(max_pps=pps), "return_zero")
 
     def move_to(self, point, pps=None):
-        self._run(lambda: self.arm.move_to(point, max_pps=pps))
+        self._run(lambda: self.arm.move_to(point, max_pps=pps),
+                  f"move_to ({point.x:.0f},{point.y:.0f},{point.z:.0f})")
 
     # --- continuous jog (dead-man) -----------------------------------------
     def jog(self, rates=None, cart=None, ttl=None, arm_frame=False):
@@ -87,7 +107,9 @@ class ArmController:
             running = self._jog_thread is not None and self._jog_thread.is_alive()
             if not running and (rates or cart):
                 if not self._move_lock.acquire(blocking=False):
+                    self.note_error("jog", "busy: another move holds the lock")
                     raise RuntimeError("busy: another move is running")
+                log.info("jog start rates=%s cart=%s arm_frame=%s", rates, cart, bool(arm_frame))
                 self._jog_thread = threading.Thread(target=self._jog_loop, daemon=True)
                 self._jog_thread.start()
 
@@ -119,6 +141,8 @@ class ArmController:
         vel = {a: 0.0 for a in motors}
         carry = {a: 0.0 for a in motors}
         next_t = time.monotonic()
+        clamped = set()
+        why = "idle"
         try:
             while not (self.estopped or self.arm.abort.is_set()):
                 target = self._jog_targets()
@@ -132,13 +156,35 @@ class ArmController:
                 for a, n in done.items():
                     if n != steps[a]:            # hit a travel limit: stop that axis
                         vel[a], carry[a] = 0.0, 0.0
+                        if a not in clamped:
+                            clamped.add(a)
+                            log.warning("jog: axis %s hit its travel limit at %d steps", a,
+                                        motors[a].position)
+                    else:
+                        clamped.discard(a)
                 next_t += JOG_DT
                 time.sleep(max(0.0, next_t - JOG_LEAD - time.monotonic()))
+        except Exception as e:
+            why = f"CRASH {e!r}"
+            log.exception("jog loop crashed")
+            self.note_error("jog", e)
+        else:
+            if self.estopped or self.arm.abort.is_set():
+                why = "e-stop"
         finally:
             while any(m.busy() for m in motors.values()) and not self.arm.abort.is_set():
                 time.sleep(0.005)
             self.moving = False
             self._move_lock.release()
+            log.info("jog end (%s)", why)
+
+    def debug(self):
+        """Why-nothing-moves info for /status: lock, jog thread, abort flag, last failure."""
+        return {"lock_held": self._move_lock.locked(),
+                "jog_alive": bool(self._jog_thread and self._jog_thread.is_alive()),
+                "abort": self.arm.abort.is_set(),
+                "positions": {n: m.position for n, m in self.arm.motors.items()},
+                "last_error": self.last_error}
 
     def disable(self):
         """Latched emergency stop: cut torque now, refuse moves until enabled.
@@ -147,10 +193,12 @@ class ArmController:
         touches), so torque drops immediately; the in-flight pulse train just
         finishes harmlessly into a disabled driver.
         """
+        log.warning("E-STOP (moving=%s)", self.moving)
         self.estopped = True
         self.arm.disable()
 
     def enable(self):
+        log.info("motors re-enabled (axes un-homed: re-home before relying on limits)")
         self.arm.enable()
         self.estopped = False
 
@@ -158,7 +206,7 @@ class ArmController:
         self.arm.zero()
 
     def find_home(self, axis):
-        self._run(lambda: self.arm.find_home(axis))
+        self._run(lambda: self.arm.find_home(axis), f"find_home {axis}")
 
     def status(self):
         return {
@@ -168,6 +216,7 @@ class ArmController:
             "estopped": self.estopped,
             "home": {ax: self.arm.at_home(ax) for ax in self.arm.home_pins},
             "homed": sorted(self.arm.homed),
+            "debug": self.debug(),
         }
 
     def close(self):
