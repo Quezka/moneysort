@@ -154,7 +154,7 @@ PAGE = """<!doctype html><html lang="it"><head>
   .moving { color: #58a6ff; } .idle { color: #6e7681; }
   .controls { display: flex; align-items: center; gap: 14px; margin-top: 22px; }
   .spacer { flex: 1; }
-  button { font-family: inherit; font-weight: 700; border: none; border-radius: 12px;
+  button { touch-action: manipulation; font-family: inherit; font-weight: 700; border: none; border-radius: 12px;
            cursor: pointer; color: #fff; -webkit-tap-highlight-color: transparent; }
   button:active { transform: translateY(3px); box-shadow: none !important; }
   .estop { background: #da3633; font-size: 22px; letter-spacing: 1px; padding: 20px 34px; box-shadow: 0 4px 0 #a5201d; }
@@ -207,6 +207,23 @@ PAGE = """<!doctype html><html lang="it"><head>
       function show(m) { var e = document.getElementById("jserr"); if (!e) return;
         e.style.display = "block"; e.textContent = "JS: " + m; }
       window.onerror = function (msg, src, line, col) { show(msg + " (line " + line + ":" + col + ")"); };
+      // Touch fallback: some kiosk WebKit builds fire no "click" after a tap on a button (it just
+      // animates). If a short tap ends on a button and no click follows, click it ourselves.
+      var lastClick = 0, sx = 0, sy = 0, tracing = [];
+      function trace(m) { tracing.push(m); if (tracing.length > 4) tracing.shift(); }
+      document.addEventListener("click", function () { lastClick = Date.now(); }, true);
+      document.addEventListener("touchstart", function (e) {
+        var t = e.touches && e.touches[0]; if (t) { sx = t.clientX; sy = t.clientY; }
+      }, true);
+      document.addEventListener("touchend", function (e) {
+        var t = e.changedTouches && e.changedTouches[0];
+        var b = e.target && e.target.closest ? e.target.closest("button") : null;
+        if (!b || !t || Math.abs(t.clientX - sx) > 20 || Math.abs(t.clientY - sy) > 20) return;
+        var at = Date.now();
+        setTimeout(function () {
+          if (lastClick < at) { trace("tap->click " + (b.id || b.className)); b.click(); }
+        }, 300);
+      }, true);
       window.addEventListener("unhandledrejection", function (ev) { show("promise: " + (ev.reason && ev.reason.message || ev.reason)); });
     })();
   </script>
