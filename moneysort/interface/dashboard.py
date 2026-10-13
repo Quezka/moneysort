@@ -169,14 +169,17 @@ PAGE = """<!doctype html><html lang="it"><head>
   .settings > summary::-webkit-details-marker { display: none; }
   .settings[open] > summary { color: #c9d1d9; }
   .settings .controls { margin-top: 8px; }
-  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none;
+  /* explicit offsets / width, no inset / min(): the kiosk's old WebKit may not know them
+     and then the dialog lands off-screen -- buttons seem to "do nothing" */
+  #modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100%; height: 100%;
+           background: rgba(0,0,0,.65); display: none;
            align-items: center; justify-content: center; z-index: 200; }
   #modal.show { display: flex; }
   .dialog { background: #161b22; border: 1px solid #30363d; border-radius: 16px; padding: 26px 30px;
-            width: min(560px, 90vw); box-shadow: 0 20px 60px rgba(0,0,0,.7); }
+            width: 90%; max-width: 560px; box-shadow: 0 20px 60px rgba(0,0,0,.7); }
   .dialog p { font-size: 20px; line-height: 1.35; margin-bottom: 22px; }
-  .dialog .row { display: flex; gap: 14px; }
-  .dialog button { flex: 1; font-size: 19px; padding: 16px 12px; }
+  .dialog .row { display: flex; }
+  .dialog button { flex: 1; font-size: 19px; padding: 16px 12px; margin: 0 7px; }
   .dialog .cancel { background: #30363d; box-shadow: 0 4px 0 #21262d; }
   .dialog .okbtn { background: #1f6feb; box-shadow: 0 4px 0 #164a9e; }
   .dialog .okbtn.danger { background: #da3633; box-shadow: 0 4px 0 #a5201d; }
