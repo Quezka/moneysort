@@ -196,6 +196,17 @@ PAGE = """<!doctype html><html lang="it"><head>
   .toast.warn    { border-left-color: #d29922; background: #2a2413; } .toast.warn    .ico { color: #d29922; }
   .toast.error   { border-left-color: #f85149; background: #2c1919; } .toast.error   .ico { color: #f85149; }
 </style></head><body>
+  <div id="jserr" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:999;background:#7d1512;color:#fff;
+       font:14px monospace;padding:8px 12px;white-space:pre-wrap"></div>
+  <script>
+    // The kiosk has no console: show page errors on screen so "it does nothing" has a reason.
+    (function () {
+      function show(m) { var e = document.getElementById("jserr"); if (!e) return;
+        e.style.display = "block"; e.textContent = "JS: " + m; }
+      window.onerror = function (msg, src, line, col) { show(msg + " (line " + line + ":" + col + ")"); };
+      window.addEventListener("unhandledrejection", function (ev) { show("promise: " + (ev.reason && ev.reason.message || ev.reason)); });
+    })();
+  </script>
   <div id="toasts"></div>
   <div id="modal"><div class="dialog">
     <p id="modalmsg"></p>
