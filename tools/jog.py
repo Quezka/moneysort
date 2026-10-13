@@ -11,7 +11,8 @@ Hold a key to move, release to stop (POST /jog: a dead-man in armd -- if the key
 repeats stop arriving, the arm decelerates by itself within ~0.25 s). Two modes
 (toggle with 'm'):
   JOINT      - one axis at a time, in degrees/second
-  CARTESIAN  - the tool tip in mm/second (base frame), via the kinematics Jacobian
+  CARTESIAN  - the tool tip in mm/second, relative to where the arm points (up/down =
+               extend/retract, left/right = swing the base), via the kinematics Jacobian
 
 A terminal reports key *presses* (and auto-repeat) but never releases, so the
 first press holds for FIRST_HOLD (about the OS repeat delay) and each repeat keeps
@@ -99,7 +100,7 @@ HELP = """\
  MODE  m: toggle joint/cartesian      SPEED  ]: faster   [: slower
  HOLD a key to move, release to stop
  JOINT     q/a elbow x +/-   w/s shoulder y +/-   e/d base z +/-
- CARTESIAN arrows: forward/back = X, left/right = Y     w/s: Z up/down
+ CARTESIAN arrows: up/down = extend/retract, left/right = swing base     w/s: up/down
  h: home all   k: return to zero   SPACE: E-STOP   o: re-enable   Esc: stop   Shift-Q: quit"""
 
 
@@ -140,7 +141,7 @@ def _jog_payload(mode, key, speed):
             v["y"] = speed if key == "RIGHT" else -speed
         else:
             v["z"] = speed if key == "w" else -speed
-        return {"cart": v}
+        return {"cart": v, "frame": "arm"}
     return None
 
 

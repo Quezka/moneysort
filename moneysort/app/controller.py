@@ -29,6 +29,7 @@ class ArmController:
         self._jog_lock = threading.Lock()    # guards the target below
         self._jog_rates = {}                 # joint mode: {axis: deg/s}
         self._jog_cart = None                # cartesian mode: (vx, vy, vz) mm/s
+        self._jog_arm_frame = False          # True: cart is (radial, tangential, up), not base X/Y/Z
         self._jog_deadline = 0.0
         self._jog_thread = None
 
@@ -63,11 +64,13 @@ class ArmController:
         self._run(lambda: self.arm.move_to(point, max_pps=pps))
 
     # --- continuous jog (dead-man) -----------------------------------------
-    def jog(self, rates=None, cart=None, ttl=None):
+    def jog(self, rates=None, cart=None, ttl=None, arm_frame=False):
         """Hold-to-move. Set the target velocity; send again before `ttl` runs out.
 
         rates: {axis: deg/s} in joint mode, or cart: (vx, vy, vz) mm/s for the tool
-        tip (needs x & y homed). Empty/zero stops (with a short ramp-down). If no
+        tip (needs x & y homed). With arm_frame the cart vector is (radial, tangential,
+        up) relative to where the arm points, so "sideways" always swings the base.
+        Empty/zero stops (with a short ramp-down). If no
         new jog arrives within ttl the arm decelerates to rest by itself, so a
         dropped connection or a released key can never leave it running."""
         if self.estopped:
@@ -77,7 +80,7 @@ class ArmController:
         if cart and not {"x", "y"} <= self.arm.homed:
             raise RuntimeError("home x & y before cartesian jog (need a position reference)")
         with self._jog_lock:
-            self._jog_rates, self._jog_cart = rates, cart
+            self._jog_rates, self._jog_cart, self._jog_arm_frame = rates, cart, bool(arm_frame)
             self._jog_deadline = time.monotonic() + (JOG_TTL if ttl is None else min(float(ttl), 1.0))
             if not (rates or cart):
                 self._jog_deadline = 0.0
@@ -92,10 +95,13 @@ class ArmController:
         """Target speeds in steps/s per axis for the current jog request."""
         with self._jog_lock:
             rates, cart, live = self._jog_rates, self._jog_cart, time.monotonic() < self._jog_deadline
+            arm_frame = self._jog_arm_frame
         if not live:
             return {a: 0.0 for a in self.arm.motors}
         if cart:
             ang = {n: m.angle for n, m in self.arm.motors.items()}   # unrounded
+            if arm_frame:
+                cart = jogmath.arm_to_base_frame(cart, ang["z"])
             try:
                 rates = jogmath.cart_to_joint_rates(JointAngles(**ang), cart)
             except ValueError:                   # singular pose: hold still

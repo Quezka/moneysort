@@ -56,6 +56,18 @@ def _solve3(m, b):
     return out
 
 
+def arm_to_base_frame(vel, yaw_deg):
+    """Rotate a tool velocity given in the ARM's heading frame into the base frame.
+
+    vel = (radial, tangential, vertical): radial = along the arm (extend/retract),
+    tangential = sideways (swing the base), vertical = up. At yaw 0 the arm points
+    along base +X, so the frame is the identity; otherwise rotate by the yaw.
+    """
+    c, s = math.cos(math.radians(yaw_deg)), math.sin(math.radians(yaw_deg))
+    r, t, v = vel
+    return (r * c - t * s, r * s + t * c, v)
+
+
 def cart_to_joint_rates(angles, vel, eps=0.25):
     """Tool-tip velocity -> joint rates at the pose `angles`.
 

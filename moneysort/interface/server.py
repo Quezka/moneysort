@@ -15,7 +15,7 @@ over HTTP instead of by claiming GPIO directly:
     GET  /status           -> system + live arm state (JSON)
     POST /move             -> {"axis":"z","steps":800,"pps":4000}
     POST /detect           -> coins in camera frame (+ base_mm when camera_calib.json exists)
-    POST /jog              -> hold-to-move: {"rates":{"x":deg/s,..}} or {"cart":{"x":mm/s,..}}, repeat within ~0.25s
+    POST /jog              -> hold-to-move: {"rates":{"x":deg/s,..}} or {"cart":{"x":mm/s,..}} (+"frame":"arm": x=along arm, y=sideways), repeat within ~0.25s
     POST /move_to          -> {"x":..,"y":..,"z":..} tool tip to a point (mm, via IK)
     POST /return_zero      -> drive every axis back to its zero (no switch seek)
     POST /home             -> home all: x/y seek switches, z returns to zero
@@ -185,7 +185,8 @@ def make_handler(ctrl, camera):
                     b = self._body()
                     c = b.get("cart")
                     ctrl.jog(rates=b.get("rates"),
-                             cart=(c["x"], c["y"], c["z"]) if c else None, ttl=b.get("ttl"))
+                             cart=(c["x"], c["y"], c["z"]) if c else None, ttl=b.get("ttl"),
+                             arm_frame=b.get("frame") == "arm")
                     self._send(json.dumps({"ok": True}))     # hot path: no status
                     return
                 elif self.path.startswith("/move_to"):

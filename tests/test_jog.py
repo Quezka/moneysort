@@ -58,5 +58,23 @@ class TestCartRates(unittest.TestCase):
             jog.cart_to_joint_rates(JointAngles(x=-90, y=0, z=0), (1, 0, 0))
 
 
+class TestArmFrame(unittest.TestCase):
+    def test_identity_at_zero_yaw(self):
+        self.assertEqual(jog.arm_to_base_frame((10, 5, 3), 0), (10, 5, 3))
+
+    def test_sideways_is_base_swing_only_at_any_yaw(self):
+        for yaw in (-90, -30, 0, 45, 90, 170):
+            a = JointAngles(x=-30, y=40, z=yaw)
+            q = jog.cart_to_joint_rates(a, jog.arm_to_base_frame((0, 10, 0), yaw))
+            self.assertLess(abs(q["x"]), 0.02)       # finite-difference noise only
+            self.assertLess(abs(q["y"]), 0.02)
+            self.assertGreater(abs(q["z"]), 1.0)
+
+    def test_radial_leaves_base_alone(self):
+        a = JointAngles(x=-30, y=40, z=90)
+        q = jog.cart_to_joint_rates(a, jog.arm_to_base_frame((10, 0, 0), 90))
+        self.assertLess(abs(q["z"]), 0.02)
+
+
 if __name__ == "__main__":
     unittest.main()
