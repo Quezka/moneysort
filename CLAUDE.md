@@ -37,6 +37,14 @@ the documented CLI paths don't change).
     `GPIOCHIP`, `JOINTS` (pins + calibration).
 - **`hardware/stepper.py`** (`Stepper`) — per-axis STEP/DIR via `lgpio.tx_pulse`
   (hardware-timed), consumes `domain.planning`.
+- **`hardware/camera.py`** (`Camera`) — Intel RealSense D435 owned by the daemon
+  (one process holds the device, like GPIO). Background thread keeps the latest
+  aligned depth+colour frame; `jpeg()` feeds the MJPEG stream, `detect()` runs
+  `vision`. USB3 profile first, USB2-safe low-fps fallback. Imports are guarded:
+  without `pyrealsense2`/OpenCV or a device it comes up `ok=False` and armd runs
+  arm-only.
+- **`vision.py`** — OpenCV Hough coin detection, hardware-free (caller supplies
+  `depth_at`/`deproject`); returns each coin's pixel + camera-frame 3D point (mm).
 - **`app/`** — orchestration/policy, no HTTP:
   - `arm.py` (`Arm`) — `move`, `move_many` (coordinated), homing (`find_home`,
     `home_all`), `return_zero`, `zero`, shared `enable`/`disable` with an `abort`
@@ -45,14 +53,21 @@ the documented CLI paths don't change).
     latched e-stop, assembles `status()`.
 - **`interface/`** — delivery:
   - `server.py` — long-running daemon (systemd `moneysort-arm`) that OWNS all
-    GPIO for its lifetime (so the e-stop is latched). Serves dashboard + JSON API
-    on **:8080** (binds `0.0.0.0`, reachable from any LAN PC).
+    GPIO **and the camera** for its lifetime (so the e-stop is latched). Serves
+    dashboard + JSON API on **:8080** (binds `0.0.0.0`, reachable from any LAN PC),
+    incl. the camera feed (`/camera`, `/camera?detect=1`), `/detected`, `POST /detect`.
   - `dashboard.py` — the HTML `PAGE` + stdlib system-metric helpers (no GPIO).
     The page is in Italian; every on-screen string goes through `t()` with its Italian in the `IT`
     table (add `?lang=en` to the address for English). Add both when adding UI text.
   - `cli.py` — CLI HTTP client (see `docs/USAGE.md`).
 - **`tests/`** — `python3 -m unittest discover tests` (pure domain; no hardware).
-- **`deploy/`** — `deploy.sh`, `setup.sh`, systemd unit, kiosk autostart.
+- **`tools/`** — run on the Pi, all thin HTTP clients of armd (never touch GPIO or
+  the camera): `jog.py` (keyboard teleop, joint/cartesian), `coin_detect.py`,
+  `calibrate_camera.py` (camera→base rigid transform at a survey pose →
+  `camera_calib.json`), `realsense_test.py`.
+- **`deploy/`** — `deploy.sh`, `setup.sh`, `install_realsense.sh` (pyrealsense2 on
+  the Pi: pip wheel or long librealsense source build), systemd unit, kiosk
+  autostart (`kiosk.sh`, `cog` fullscreen on labwc).
 
 ## Hardware (summary; full wiring in `docs/PINOUT.md`)
 
@@ -88,9 +103,17 @@ elbow but a passive pivot keeps the tool level, so the tool adds a *constant*
 horizontal reach. Model (mm, Z from base plate):
 `r = L1·sin(y) + LF·cos(x) + LT`, `h = L1·cos(y) + LF·sin(x) + D`
 (L1 161, LF 210, LT 132, D 168), empirically fit to a 3×3 on-arm tip grid,
-rms ~1 cm / max ~2 cm. `move_to` requires x & y homed. Next: re-verify a couple
-of `moveto` targets on the arm, then **camera** (Intel RealSense; `pyrealsense2`
-on Pi is the risky install). Visual-servoing controller deferred.
+rms ~1 cm / max ~2 cm. `move_to` requires x & y homed. The base (z) is hard-limited
+to ±180° from zero.
+
+**Camera done:** RealSense D435 (eye-in-hand) lives in armd with a live MJPEG feed
+on the dashboard and coin detection (`/detect`); `tools/calibrate_camera.py`
+produces the camera→base transform (valid for its survey pose; re-run if the mount
+moves). `pyrealsense2` on the Pi was the risky install (`deploy/install_realsense.sh`).
+
+**Next:** re-verify a couple of `moveto` targets on the arm, then the
+visual-servoing controller (deferred) and the actual sorting logic (pick a
+detected coin → base frame → `move_to`).
 
 ## Docs
 

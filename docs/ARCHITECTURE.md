@@ -9,8 +9,9 @@ how to drive it from a terminal is in [`USAGE.md`](USAGE.md).
 
 A vision-guided 3-axis stepper robot arm on a Raspberry Pi 4, working toward a
 money sorter: a camera picks a target → inverse kinematics → the arm moves.
-Today the motion stack, calibration, homing, e-stop, dashboard, and CLI are all
-done; kinematics and the camera are next.
+Today the motion stack, calibration, homing, e-stop, dashboard, CLI, kinematics
+(`move_to`) and the camera (live feed, coin detection, camera→base calibration)
+are all done; visual servoing and the sorting logic are next.
 
 The three joints:
 
@@ -55,7 +56,7 @@ graph TD
     end
     subgraph domain
         planning[planning.py]
-        kinematics[kinematics.py<br/>stub]
+        kinematics[kinematics.py]
         config[config.py]
     end
     server --> controller
@@ -65,7 +66,7 @@ graph TD
     arm --> stepper
     arm --> config
     stepper --> planning
-    arm -.future.-> kinematics
+    arm --> kinematics
 ```
 
 ### Repository layout
@@ -73,11 +74,13 @@ graph TD
 ```
 moneysort/                 the package
   config.py                pins, calibration, PORT, GPIOCHIP (single source)
+  vision.py                OpenCV coin detection (hardware-free)
   domain/
     planning.py            trapezoidal motion profile (pure)
-    kinematics.py          FK/IK (stub — needs measured link lengths)
+    kinematics.py          FK/IK, levelling-wrist model (pure)
   hardware/
     stepper.py             one STEP/DIR axis via lgpio.tx_pulse
+    camera.py              RealSense D435 owned by the daemon (frames, MJPEG, detect)
   app/
     arm.py                 multi-axis coordination, homing, soft limits
     controller.py          serialize motion, latched e-stop, status
@@ -88,7 +91,8 @@ moneysort/                 the package
 armd.py                    thin root shim → interface.server.main
 arm_test.py                thin root shim → interface.cli.main
 tests/                     pure-domain unit tests (no hardware)
-deploy/                    deploy.sh, setup.sh, systemd unit, kiosk
+tools/                     HTTP clients of armd: jog, coin_detect, calibrate_camera
+deploy/                    deploy.sh, setup.sh, install_realsense.sh, systemd unit, kiosk
 docs/                      PINOUT, USAGE, ARCHITECTURE
 ```
 
@@ -288,16 +292,17 @@ per axis. z is continuous; x/y are soft-limited once homed.
 
 `python3 -m unittest discover tests` runs the pure-domain tests (motion planning:
 step conservation, speed bounds, cruise chunking, ramp shape) with **no hardware
-needed** — the payoff of keeping `domain/` free of `lgpio`. Kinematics tests will
-join them once the solver is implemented.
+needed** — the payoff of keeping `domain/` free of `lgpio`. Kinematics is covered
+too (`tests/test_kinematics.py`).
 
 ## What's next
 
-- **Inverse kinematics** — implemented in `domain/kinematics.py` and unit-tested;
-  next validate it against the real arm, then expose a "move to point" path
-  (`Arm.move_to(point)` → `inverse` → `move_many`) with a `/move_to` endpoint.
-- **Camera (Intel RealSense)** — a new interface/adapter that detects a target,
-  transforms it into the arm's base frame, and feeds IK. `pyrealsense2` on the
-  Pi is the risky install (may need building) — de-risk with an import spike.
+- **Verify `move_to`** on the real arm with a couple of targets (IK and the
+  `/move_to` endpoint are implemented and unit-tested).
+- **Camera → arm** — done: `hardware/camera.py` + `vision.py` detect coins in the
+  camera frame and `tools/calibrate_camera.py` solves the camera→base transform
+  (`camera_calib.json`, valid for its survey pose). Remaining: use it to turn a
+  detection into a `move_to` target.
 - **Visual servoing** — a setpoint-tracking controller is the eventual model,
-  deferred until IK + camera are in.
+  deferred.
+- **Sorting logic** — pick a detected coin, move to it, sort by kind.
