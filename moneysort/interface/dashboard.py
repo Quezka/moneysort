@@ -199,7 +199,6 @@ PAGE = """<!doctype html><html lang="it"><head>
   .toast.warn    { border-left-color: #d29922; background: #2a2413; } .toast.warn    .ico { color: #d29922; }
   .toast.error   { border-left-color: #f85149; background: #2c1919; } .toast.error   .ico { color: #f85149; }
 </style></head><body>
-  <div id="evlog" style="position:fixed;left:6px;bottom:2px;z-index:998;font:11px monospace;color:#6e7681;pointer-events:none"></div>
   <div id="jserr" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:999;background:#7d1512;color:#fff;
        font:14px monospace;padding:8px 12px;white-space:pre-wrap"></div>
   <script>
