@@ -14,6 +14,7 @@ over HTTP instead of by claiming GPIO directly:
     GET  /                 -> dashboard page
     GET  /status           -> system + live arm state (JSON)
     POST /move             -> {"axis":"z","steps":800,"pps":4000}
+    POST /detect           -> coins in camera frame (+ base_mm when camera_calib.json exists)
     POST /move_to          -> {"x":..,"y":..,"z":..} tool tip to a point (mm, via IK)
     POST /return_zero      -> drive every axis back to its zero (no switch seek)
     POST /home             -> home all: x/y seek switches, z returns to zero
@@ -25,6 +26,7 @@ Runs as a systemd service (see deploy/). Jog with arm_test.py, which is now an
 HTTP client rather than a direct-GPIO script.
 """
 import json
+import os
 import signal
 import socket
 import threading
@@ -33,9 +35,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from moneysort.config import PORT
 from moneysort.app.controller import ArmController
+from moneysort.domain import calibration
 from moneysort.domain.kinematics import Point
 from moneysort.hardware.camera import Camera
 from moneysort.interface import dashboard   # metric helpers, PAGE, system_action
+
+CALIB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), "camera_calib.json")   # written by tools/calibrate_camera.py
 
 BUILD = str(int(time.time()))               # changes each daemon start -> kiosk auto-reloads
 
@@ -131,7 +137,16 @@ def make_handler(ctrl, camera):
             try:
                 if self.path.startswith("/detect"):
                     coins, _ = camera.detect(**self._body())
-                    self._send(json.dumps({"ok": True, "coins": coins}))
+                    calib = calibration.load(CALIB_PATH)       # re-read: no restart after recalibrating
+                    at_survey = None
+                    if calib:
+                        at_survey = calib.at_survey(ctrl.status()["joints"])
+                        for c in coins:
+                            c["base_mm"] = calib.to_base(c["cam_mm"])
+                    # base_mm is only trustworthy when at_survey is true (eye-in-hand camera)
+                    self._send(json.dumps({"ok": True, "coins": coins,
+                                           "calibrated": calib is not None,
+                                           "at_survey": at_survey}))
                     return
                 if self.path.startswith("/disable"):
                     ctrl.disable()

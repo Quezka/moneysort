@@ -10,3 +10,6 @@ state.json.tmp
 # python
 __pycache__/
 *.pyc
+
+# per-mount camera calibration (tools/calibrate_camera.py)
+camera_calib.json

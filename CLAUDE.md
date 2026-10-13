@@ -33,6 +33,9 @@ the documented CLI paths don't change).
   - `kinematics.py` — FK/IK for a base-yaw + 2-link arm with a **levelling
     wrist** (forearm tilts, tool stays level → constant reach). Empirically fit
     to a 3×3 on-arm tip grid (rms ~1 cm); `forward()`/`inverse()` + `OutOfReach`.
+  - `calibration.py` — camera→base rigid transform (`CameraCalib.to_base`,
+    `at_survey`), loaded from the git-ignored `camera_calib.json`; armd's
+    `/detect` adds `base_mm` per coin and `at_survey` (valid only at the survey pose).
   - `config.py` (package root) — single source of truth: `PORT`, `ENABLE_PIN`,
     `GPIOCHIP`, `JOINTS` (pins + calibration).
 - **`hardware/stepper.py`** (`Stepper`) — per-axis STEP/DIR via `lgpio.tx_pulse`
