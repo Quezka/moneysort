@@ -32,6 +32,7 @@ import math
 import os
 import signal
 import socket
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -49,6 +50,17 @@ log = logging.getLogger("armd")
 CALIB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "camera_calib.json")   # written by tools/calibrate_camera.py
 
+def _git_version():
+    """Short commit hash of the code that is running (shown on the dashboard)."""
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return subprocess.run(["git", "-C", root, "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True, timeout=3).stdout.strip() or "?"
+    except Exception:
+        return "?"
+
+
+VERSION = _git_version()
 BUILD = str(int(time.time()))               # changes each daemon start -> kiosk auto-reloads
 
 
@@ -95,6 +107,7 @@ def build_status(ctrl, camera):
         "camera": {"ok": camera.ok, "desc": camera.desc, "error": camera.error,
                    "calibrated": os.path.exists(CALIB_PATH)},
         "build": BUILD,
+        "version": VERSION,
         "time": time.strftime("%H:%M:%S"),
     }
 

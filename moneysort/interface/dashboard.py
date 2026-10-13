@@ -199,6 +199,7 @@ PAGE = """<!doctype html><html lang="it"><head>
   .toast.warn    { border-left-color: #d29922; background: #2a2413; } .toast.warn    .ico { color: #d29922; }
   .toast.error   { border-left-color: #f85149; background: #2c1919; } .toast.error   .ico { color: #f85149; }
 </style></head><body>
+  <div id="evlog" style="position:fixed;left:6px;bottom:2px;z-index:998;font:11px monospace;color:#6e7681;pointer-events:none"></div>
   <div id="jserr" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:999;background:#7d1512;color:#fff;
        font:14px monospace;padding:8px 12px;white-space:pre-wrap"></div>
   <script>
@@ -209,7 +210,16 @@ PAGE = """<!doctype html><html lang="it"><head>
       window.onerror = function (msg, src, line, col) { show(msg + " (line " + line + ":" + col + ")"); };
       // Touch fallback: some kiosk WebKit builds fire no "click" after a tap on a button (it just
       // animates). If a short tap ends on a button and no click follows, click it ourselves.
-      var lastClick = 0, sx = 0, sy = 0, tracing = [];
+      var lastClick = 0, sx = 0, sy = 0, tracing = [], evlog = [];
+      // Event trace (bottom-left): which input events actually reach the page. Diagnostic for the kiosk.
+      ["touchstart", "touchend", "pointerdown", "pointerup", "mousedown", "mouseup", "click"].forEach(function (n) {
+        document.addEventListener(n, function (e) {
+          var t = e.target, el = document.getElementById("evlog");
+          evlog.push(n + ":" + (t && (t.id || t.tagName)));
+          if (evlog.length > 5) evlog.shift();
+          if (el) el.textContent = evlog.join("   ");
+        }, true);
+      });
       function trace(m) { tracing.push(m); if (tracing.length > 4) tracing.shift(); }
       document.addEventListener("click", function () { lastClick = Date.now(); }, true);
       document.addEventListener("touchstart", function (e) {
@@ -235,7 +245,7 @@ PAGE = """<!doctype html><html lang="it"><head>
   </div></div>
   <header>
     <h1>Money<span>Sorter</span></h1>
-    <div class="clock" id="clock">--:--:--</div>
+    <div class="clock"><span id="ver" style="font-size:12px;color:#6e7681;margin-right:12px"></span><span id="clock">--:--:--</span></div>
   </header>
 
   <div class="grid" id="sys"></div>
@@ -347,6 +357,7 @@ async function tick() {
   build = d.build;
   last = d;
   document.getElementById("clock").textContent = d.time;
+  document.getElementById("ver").textContent = d.version ? "v" + d.version : "";
 
   document.getElementById("sys").innerHTML =
     card(t("CPU Temp"), d.temp, "&deg;C", "", cls(d.temp, 65, 80)) +
