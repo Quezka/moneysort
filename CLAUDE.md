@@ -128,4 +128,5 @@ detected coin → base frame → `move_to`).
 - `docs/ARCHITECTURE.md` — the layered design, every module, runtime model, and
   the key mechanisms (motion planning, e-stop, homing, soft limits).
 - `docs/PINOUT.md` — full wiring, calibration, home switches.
+- `docs/GRIPPER.md` — suction-cup research for picking coins (pump + release valve; not built yet).
 - `docs/USAGE.md` — commanding the arm from a terminal (`arm_test.py` + curl API).

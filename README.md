@@ -11,6 +11,7 @@ touch-friendly dashboard + JSON control API on port **8080**.
 - **Dashboard:** `http://money-sorter.local:8080` (from any device on the LAN)
 - **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - layers, modules, mechanisms
 - **Wiring & calibration:** [`docs/PINOUT.md`](docs/PINOUT.md)
+- **Gripper research:** [`docs/GRIPPER.md`](docs/GRIPPER.md) - suction cup options for coins
 - **Commanding the arm:** [`docs/USAGE.md`](docs/USAGE.md) - `arm_test.py` + curl API
 - **Project context / conventions:** [`CLAUDE.md`](CLAUDE.md)
 
