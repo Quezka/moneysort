@@ -257,6 +257,8 @@ const IT = {
   "not calibrated": "non calibrata", "away from survey pose": "fuori dalla posa di rilievo",
   "Cancel": "Annulla", "Confirm": "Conferma", "no depth": "senza profondità",
   "pulses still running on": "impulsi ancora attivi su", "press EMERGENCY DISABLE": "premi ARRESTO DI EMERGENZA",
+  "The arm is not homed (its position is lost at every start). Home now? X and Y seek their switches; Z returns to zero.":
+    "Il braccio non è azzerato (a ogni avvio perde la posizione). Eseguire l'homing ora? X e Y cercano i finecorsa; Z torna a zero.",
   "Robot Arm": "Braccio robotico", "Camera": "Fotocamera", "camera offline": "fotocamera offline",
   "camera feed": "immagine della fotocamera",
   "EMERGENCY DISABLE": "ARRESTO DI EMERGENZA", "Re-enable motors": "Riattiva i motori",
@@ -426,15 +428,35 @@ document.getElementById("zero").onclick = async () => {
         r.ok ? "success" : "error");
   tick();
 };
-document.getElementById("home").onclick = async () => {
-  if (last.estopped) { toast(t("Motors are disabled — re-enable first"), "warn"); return; }
-  if (!await ask(t("Home all axes? X and Y seek their switches; Z returns to zero."))) return;
+async function runHome() {
   toast(t("Homing axes…"), "info", 5000);
   const r = await post("/home");
   if (!r.ok) toast(r.error || t("Homing failed"), "error");
   else if (!r.estopped) toast(t("Homing complete"), "success");
   tick();
+}
+document.getElementById("home").onclick = async () => {
+  if (last.estopped) { toast(t("Motors are disabled — re-enable first"), "warn"); return; }
+  if (!await ask(t("Home all axes? X and Y seek their switches; Z returns to zero."))) return;
+  runHome();
 };
+
+// After every start the arm's position is unknown (steppers are open-loop and the daemon forgets it).
+// Offer to home as soon as the dashboard sees an un-homed arm; one question per un-homed spell
+// (it asks again after an e-stop, which un-homes everything, or a daemon restart).
+let homeAsked = false;
+function offerHome() {
+  const a = last.arm;
+  if (!a || !a.homed) return;
+  const needs = ["x", "y"].some(k => a.joints && k in a.joints && !a.homed.includes(k));
+  if (!needs) { homeAsked = false; return; }
+  if (homeAsked || last.estopped || a.moving || document.getElementById("modal").classList.contains("show")) return;
+  homeAsked = true;
+  ask(t("The arm is not homed (its position is lost at every start). Home now? X and Y seek their switches; Z returns to zero.")).then(ok => {
+    if (ok) runHome();
+  });
+}
+setInterval(offerHome, 1500);
 document.getElementById("desktop").onclick = () => { toast(t("Exiting to desktop…"), "info"); post("/kiosk-exit"); };
 document.getElementById("reboot").onclick = async () => { if (await ask(t("Reboot the Pi?"), true)) { toast(t("Rebooting…"), "warn", 8000); post("/reboot"); } };
 document.getElementById("poweroff").onclick = async () => { if (await ask(t("Power OFF the Pi?"), true)) { toast(t("Powering off…"), "warn", 8000); post("/poweroff"); } };
