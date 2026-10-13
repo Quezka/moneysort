@@ -55,3 +55,24 @@ than stays held on a dead arm).
 - Choose two free GPIO pins (check `PINOUT.md`).
 - Software: pins in `config.py`, a `Gripper` in `hardware/`, `POST /grip` with a
   dead-man like `/jog` (never leave the pump running on a lost connection).
+
+## Where to buy (searched 2026-10-14; check price, stock and real specs before ordering)
+
+Cups (Italy, RS Components): [SMC ZP06BS](https://it.rs-online.com/web/p/ventose-pneumatiche/2273884) 6 mm bellows
+(6.80 EUR + VAT), [SMC ZP2-05ZJS](https://it.rs-online.com/web/p/ventose-pneumatiche/0391989) 5 mm bellows (7.02 EUR + VAT).
+Those are the pad only: check the mounting/fitting (nipple or holder) before buying. Cheap alternative: uxcell 6 mm
+with M5 joint, 4 pcs ([Amazon listing](https://www.amazon.com/clp/B07MG5PK77)).
+
+Pump + valve kits (6 V class, the "Arduino robot arm" kind):
+- AliExpress: [pump + valve + PWM switch + cup](https://www.aliexpress.com/item/4000186490327.html),
+  [same kit, other seller](https://aliexpress.com/item/1005003181120488.html),
+  [cup + pump for Arduino arms](https://www.aliexpress.com/item/1005002310813942.html). Listing text is marketing:
+  confirm the pump voltage (5-6 V) and vacuum (kPa) with the seller.
+- Little Bird (AU) and ThinkRobotics sell the same kind of kit (pump 4.5-6.6 V, 3-way valve 6 V).
+- DFRobot 6 V 3-way air valve ([RobotShop EU](https://eu.robotshop.com/products/dfrobot-6v-2-position-3-way-air-valve-arduino), ~100 mA, 40 kPa max).
+- Alibaba is wholesale: [6 V mini vacuum pumps](https://pumpdyx.en.alibaba.com/productgrouplist-214713373/Mini_Vacuum_Pump.html),
+  [vacuum release valves](https://www.alibaba.com/showroom/micro-vacuum-valve.html); expect minimum orders and no datasheets.
+- Amazon.it: nothing suitable found by search (only 220 V HVAC pumps). Search on the site for "pompa vuoto 6V DC mini".
+
+What to look for: pump 5-6 V DC, vacuum at least -40 kPa, a 3-way valve (so the cup vents on release), 4-5 mm nozzle.
+A 6 V part needs its own supply (24 V -> 6 V buck), not the Pi's 5 V rail.
