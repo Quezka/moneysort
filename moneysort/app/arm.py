@@ -15,7 +15,7 @@ import lgpio
 
 from moneysort.config import ENABLE_PIN, GPIOCHIP, JOINTS, RETURN_ZERO_PPS
 from moneysort.domain import kinematics
-from moneysort.hardware.stepper import Stepper
+from moneysort.hardware.stepper import ROOM_TIMEOUT_S, Stepper
 
 
 log = logging.getLogger("armd.arm")
@@ -82,6 +82,9 @@ class Arm:
         lgpio.gpio_write(self.h, self.enable_pin, 1)
         self._enabled = False
         self.homed.clear()
+        for name, m in self.motors.items():       # end any running (even infinite) pulse train
+            if m.busy() and not m.halt(wait=0.3):
+                log.error("e-stop: axis %s pulse train could not be stopped", name)
 
     @property
     def enabled(self):
@@ -210,6 +213,7 @@ class Arm:
         time.sleep(0.001)                      # DIR setup for all axes
 
         pending = {name: p[1] for name, p in plans.items()}
+        last_progress = time.monotonic()
         while pending and not self.abort.is_set():
             progressed = False
             for name in list(pending):
@@ -220,10 +224,14 @@ class Arm:
                     if not segs:
                         del pending[name]
             if not progressed:
+                if time.monotonic() - last_progress > ROOM_TIMEOUT_S:
+                    raise RuntimeError("TX queues stuck: no room for %ss (%s)" % (
+                        ROOM_TIMEOUT_S, ", ".join(sorted(pending))))
                 time.sleep(0.001)          # all queues full; let them drain
+            else:
+                last_progress = time.monotonic()
         for m, _, _ in plans.values():     # drain every queue (bursts are
-            while m.busy():                # short, so an abort clears fast)
-                time.sleep(0.005)
+            m.drain()                      # short, so an abort clears fast)
         if not self.abort.is_set():        # positions unknown after an abort
             for m, _, steps in plans.values():
                 m.position += steps

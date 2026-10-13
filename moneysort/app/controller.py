@@ -172,7 +172,9 @@ class ArmController:
             if self.estopped or self.arm.abort.is_set():
                 why = "e-stop"
         finally:
-            while any(m.busy() for m in motors.values()) and not self.arm.abort.is_set():
+            t0 = time.monotonic()
+            while (any(m.busy() for m in motors.values()) and not self.arm.abort.is_set()
+                   and time.monotonic() - t0 < 5.0):
                 time.sleep(0.005)
             self.moving = False
             self._move_lock.release()
@@ -183,6 +185,7 @@ class ArmController:
         return {"lock_held": self._move_lock.locked(),
                 "jog_alive": bool(self._jog_thread and self._jog_thread.is_alive()),
                 "abort": self.arm.abort.is_set(),
+                "tx_busy": [n for n, m in self.arm.motors.items() if m.busy()],
                 "positions": {n: m.position for n, m in self.arm.motors.items()},
                 "last_error": self.last_error}
 

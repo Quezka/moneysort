@@ -15,6 +15,7 @@ Wiring (direct 3.3V common-cathode - no level shifter needed):
     STEP gpio -> PUL+     DIR gpio -> DIR+
     all '-' terminals bussed to Pi GND
 """
+import logging
 import threading
 import time
 import lgpio
@@ -22,6 +23,12 @@ import lgpio
 from moneysort.domain import planning
 
 TX_PWM = 0  # lgpio kind selector for tx_busy / tx_room
+log = logging.getLogger("armd.stepper")
+
+# lgpio can't cancel a queued train, so nothing here may wait forever on one: every
+# wait is bounded, and a stuck queue becomes an error you can read, not a silent hang.
+ROOM_TIMEOUT_S = 5.0     # max wait for a free slot in the tx queue
+DRAIN_TIMEOUT_S = 30.0   # max wait for queued bursts to finish playing
 
 
 class Stepper:
@@ -61,16 +68,57 @@ class Stepper:
             lgpio.gpio_claim_output(handle, en_pin, 0)
 
     # --- internals --------------------------------------------------------
+    def _tx(self, pps, cycles, *, honour_abort=True, timeout=ROOM_TIMEOUT_S):
+        """tx_pulse that waits for queue room and retries "TX queue full".
+
+        Returns True once queued; False if the e-stop fired first (honour_abort);
+        raises RuntimeError if the queue stays full for `timeout` s (a train that
+        never ends is hogging it) instead of hanging or leaking lgpio's error.
+        """
+        half = max(int(round(1_000_000 / pps / 2)), 1)   # microseconds, >=1
+        t0 = time.monotonic()
+        while True:
+            if honour_abort and self.abort.is_set():     # e-stop: stop feeding
+                return False
+            if lgpio.tx_room(self.h, self.step_pin, TX_PWM) >= 1:
+                try:
+                    lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
+                    return True
+                except lgpio.error as e:                 # room check raced / queue full
+                    if "full" not in str(e).lower():
+                        raise
+            if time.monotonic() - t0 > timeout:
+                raise RuntimeError(f"TX queue stuck on GPIO{self.step_pin}: a pulse train is "
+                                   "not finishing (e-stop, then restart moneysort-arm if it persists)")
+            time.sleep(0.001)
+
     def _burst(self, pps, cycles):
         """Queue one constant-rate burst of `cycles` pulses at `pps` (blocking)."""
         if cycles <= 0 or self.abort.is_set():
             return
-        half = max(int(round(1_000_000 / pps / 2)), 1)   # microseconds, >=1
-        while lgpio.tx_room(self.h, self.step_pin, TX_PWM) < 1:
-            if self.abort.is_set():                      # e-stop: stop feeding
-                return
-            time.sleep(0.001)                            # wait for queue space
-        lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
+        self._tx(pps, cycles)
+
+    def drain(self, timeout=DRAIN_TIMEOUT_S, poll=0.005):
+        """Wait for every queued burst to finish playing (bounded)."""
+        t0 = time.monotonic()
+        while self.busy():
+            if time.monotonic() - t0 > timeout:
+                raise RuntimeError(f"TX queue on GPIO{self.step_pin} still busy after {timeout:.0f}s")
+            time.sleep(poll)
+
+    def halt(self, wait=1.0):
+        """Stop a running (possibly infinite) pulse train.
+
+        lgpio ends an infinite burst when another pulse is queued behind it, so
+        queue one final cycle (waiting up to `wait` s for room). Safe to call any
+        time -- e-stop does, for every axis. Returns False if it could not.
+        """
+        try:
+            ok = self._tx(self.min_pps, 1, honour_abort=False, timeout=wait)
+        except RuntimeError:
+            log.error("halt: could not stop the pulse train on GPIO%d (queue full)", self.step_pin)
+            return False
+        return ok
 
 
     def plan(self, steps, max_pps=None):
@@ -96,8 +144,10 @@ class Stepper:
             return True
         if lgpio.tx_room(self.h, self.step_pin, TX_PWM) < 1:
             return False
-        half = max(int(round(1_000_000 / pps / 2)), 1)
-        lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
+        try:
+            self._tx(pps, cycles, timeout=0.0)
+        except RuntimeError:
+            return False
         return True
 
     def busy(self):
@@ -120,9 +170,7 @@ class Stepper:
             if self.abort.is_set():           # e-stop: stop queuing new bursts
                 break
             self._burst(pps, cyc)
-        while self.busy():
-            time.sleep(0.005)                 # drain what's queued (bursts are
-                                              # short, so this is quick on abort)
+        self.drain()                          # what's queued (bursts are short: quick on abort)
         if not self.abort.is_set():
             self.position += steps
 
@@ -144,7 +192,10 @@ class Stepper:
             return
         level = (1 if steps < 0 else 0) ^ int(self.invert_dir)
         if level != self._dir_level:
+            t0 = time.monotonic()
             while self.busy() and not self.abort.is_set():
+                if time.monotonic() - t0 > DRAIN_TIMEOUT_S:
+                    raise RuntimeError(f"TX queue on GPIO{self.step_pin} not draining")
                 time.sleep(0.002)
             self.set_dir(level)
             time.sleep(0.001)                  # DIR setup time
@@ -160,8 +211,7 @@ class Stepper:
         self.set_dir(level)
         time.sleep(0.001)
         self._burst(pps, abs(steps))
-        while self.busy():
-            time.sleep(0.005)
+        self.drain()
         if not self.abort.is_set():
             self.position += steps
 
@@ -178,29 +228,26 @@ class Stepper:
         time.sleep(0.001)
         stopped = False
 
-        # queue ramp-up bursts then one infinite cruise burst (cyc=0),
-        # polling for queue room + trigger so we can bail during the ramp too
-        for p, cyc in planning.ramp_segs(accel_steps, pps, self.min_pps, up=True) + [(pps, 0)]:
-            while lgpio.tx_room(self.h, self.step_pin, TX_PWM) < 1:
-                if self.abort.is_set():
-                    stopped = True
+        # queue ramp-up bursts then one infinite cruise burst (cyc=0), polling for
+        # queue room + trigger so we can bail during the ramp too. The `finally`
+        # ALWAYS ends the infinite burst -- even on an exception or when the switch
+        # trips while the queue is still full of ramp bursts (the old unchecked
+        # tx_pulse raised "TX queue full" there and left the train running forever).
+        try:
+            for p, cyc in planning.ramp_segs(accel_steps, pps, self.min_pps, up=True) + [(pps, 0)]:
+                if not self._tx(p, cyc, timeout=ROOM_TIMEOUT_S):
+                    stopped = True                # e-stop while waiting for room
+                    break
+            while not stopped:                    # cruise: poll until trigger
+                if stop_fn() or self.abort.is_set():
                     break
                 time.sleep(poll)
-            if stopped:
-                break
-            ph = max(int(round(1_000_000 / p / 2)), 1)
-            lgpio.tx_pulse(self.h, self.step_pin, ph, ph, 0, cyc)
-
-        while not stopped:                       # cruise: poll until trigger
-            if stop_fn() or self.abort.is_set():
-                break
-            time.sleep(poll)
-
-        # halt: replace the (infinite) train with a single final cycle
-        half = max(int(round(1_000_000 / pps / 2)), 1)
-        lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, 1)
-        while self.busy():
-            time.sleep(0.001)
+        finally:
+            self.halt(wait=3.0)                   # queue the final cycle behind the infinite one
+            try:
+                self.drain(timeout=5.0, poll=0.001)
+            except RuntimeError as e:
+                log.error("home_seek: %s", e)
 
     @property
     def angle(self):

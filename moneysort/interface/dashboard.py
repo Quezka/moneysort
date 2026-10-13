@@ -256,6 +256,7 @@ const IT = {
   "no coins in view": "nessuna moneta inquadrata", "calibrated": "calibrata",
   "not calibrated": "non calibrata", "away from survey pose": "fuori dalla posa di rilievo",
   "Cancel": "Annulla", "Confirm": "Conferma", "no depth": "senza profondità",
+  "pulses still running on": "impulsi ancora attivi su", "press EMERGENCY DISABLE": "premi ARRESTO DI EMERGENZA",
   "Robot Arm": "Braccio robotico", "Camera": "Fotocamera", "camera offline": "fotocamera offline",
   "camera feed": "immagine della fotocamera",
   "EMERGENCY DISABLE": "ARRESTO DI EMERGENZA", "Re-enable motors": "Riattiva i motori",
@@ -351,8 +352,10 @@ async function tick() {
   }).join("");
 
   const le = a && a.debug && a.debug.last_error;
-  document.getElementById("lasterr").innerHTML = le
-    ? `<span class="warn">&#9888; ${le[0]} &middot; ${le[1]}: ${String(le[2]).replace(/</g, "&lt;")}</span>` : "";
+  const stuck = a && a.debug && !a.moving && a.debug.tx_busy && a.debug.tx_busy.length;
+  document.getElementById("lasterr").innerHTML =
+    (stuck ? `<span class="bad">&#9888; ${t("pulses still running on")} ${a.debug.tx_busy.join(", ").toUpperCase()} &mdash; ${t("press EMERGENCY DISABLE")}</span> ` : "") +
+    (le ? `<span class="warn">&#9888; ${le[0]} &middot; ${le[1]}: ${String(le[2]).replace(/</g, "&lt;")}</span>` : "");
 
   const en = d.motors_enabled, estop = document.getElementById("estop"), reen = document.getElementById("reenable");
   if (en === false) { estop.textContent = t("MOTORS DISABLED"); estop.classList.add("off"); reen.style.display = ""; }
