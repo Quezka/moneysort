@@ -51,13 +51,13 @@ cruise. These live in `arm.py` `JOINTS`.
 | Axis | Joint | Full range | Notes |
 |------|-------|-----------|-------|
 | **z** | base | 360° = **157,005 steps** (measured, full rev) → 90° ≈ 39,251 | continuous rotation, no physical limit |
-| **y** | shoulder | **33,000 steps = 90°** → 360° = 132,000 steps/rev | homed; soft-limited to **0..33,000 steps (0..90°)** |
+| **y** | shoulder | **33,000 steps = 90°** → 360° = 132,000 steps/rev | homed; soft-limited to **0..29,333 steps (0..80°)** (`SHOULDER_MAX_DEG`: stalls fully extended) |
 | **x** | elbow | **33,000 steps = 90°** → 360° = 132,000 steps/rev | homed; soft-limited to **−33,000..0 steps (0..−90°)** |
 
 - `z` has `steps_per_rev = 157005`, so `move_degrees()` is accurate for the base.
 - `y` has `steps_per_rev = 132000` (33k steps = 90°); `move_degrees("y", ...)` works.
 - `y` **soft limits are enforced once homed**: after `find_home`, home = 0 and
-  moves are clamped to 0..33,000 steps (0..90°), so it can't overtravel either
+  moves are clamped to 0..29,333 steps (0..80°, `SHOULDER_MAX_DEG`), so it can't overtravel either
   end. Limits are inactive until the axis is homed (no position reference before).
 - `x` has `steps_per_rev = 132000` (33k steps = 90°, same scale as y);
   `move_degrees("x", ...)` works. Homed at 0 (positive end), travel to −90°.

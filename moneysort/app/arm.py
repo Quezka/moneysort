@@ -12,7 +12,7 @@ import time
 
 import lgpio
 
-from moneysort.config import ENABLE_PIN, GPIOCHIP, JOINTS
+from moneysort.config import ENABLE_PIN, GPIOCHIP, JOINTS, RETURN_ZERO_PPS
 from moneysort.domain import kinematics
 from moneysort.hardware.stepper import Stepper
 
@@ -166,8 +166,10 @@ class Arm:
         Unlike home_all this seeks no switch -- it just undoes the tracked net
         motion (a no-op for an axis already at 0), so it relies on the current
         position being trusted (homed or freshly zeroed). This is the everyday
-        "go home" move; switch homing is the occasional re-init.
+        "go home" move; switch homing is the occasional re-init. Runs at
+        RETURN_ZERO_PPS unless a speed is given (gentle: it may start fully extended).
         """
+        max_pps = max_pps or RETURN_ZERO_PPS
         for m in self.motors.values():
             if self.abort.is_set():
                 break

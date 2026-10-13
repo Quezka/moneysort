@@ -90,10 +90,11 @@ Axes: **x**=elbow (STEP5/DIR6), **y**=shoulder (STEP17/DIR27), **z**=base
 | Axis | Joint | Steps/rev | Range | Home |
 |------|-------|-----------|-------|------|
 | **x** | elbow | 132,000 | 0 … −90° (0 … −33,000 steps) | switch GPIO7, home_dir +1 |
-| **y** | shoulder | 132,000 | 0 … 90° (0 … 33,000 steps) | switch GPIO8, home_dir −1 |
+| **y** | shoulder | 132,000 | 0 … 80° (0 … 29,333 steps; `SHOULDER_MAX_DEG`) | switch GPIO8, home_dir −1 |
 | **z** | base | 157,005 | continuous | no switch |
 
-Comfortable cruise = **20000 pps**. Soft limits (x/y) apply only once homed; an
+The shoulder is limited to 80° (it stalls fully extended; the mechanical stroke is 90°).
+Comfortable cruise = **20000 pps**; return-to-zero runs at `RETURN_ZERO_PPS` (6000). Soft limits (x/y) apply only once homed; an
 e-stop un-homes every axis (positions unknown after an abrupt stop) → re-home
 before relying on limits again. Steps↔degrees table in `docs/USAGE.md`.
 

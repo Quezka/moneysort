@@ -10,8 +10,7 @@ import math
 from moneysort.domain import kinematics
 from moneysort.domain.kinematics import JointAngles
 
-# |det J| (mm^3/deg^3) below this = the tip can't move as asked (arm folded straight out/in)
-SINGULAR_DET = 1.0
+DAMPING = 0.3     # mm/deg: Jacobian damping (see cart_to_joint_rates)
 
 
 def slew(v, target, accel, dt, vmin):
@@ -47,8 +46,8 @@ def _solve3(m, b):
                 - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
                 + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]))
     d = det(m)
-    if abs(d) < SINGULAR_DET:
-        raise ValueError("singular pose")
+    if abs(d) < 1e-12:
+        raise ValueError("singular system")
     out = []
     for c in range(3):
         mc = [[b[r] if k == c else m[r][k] for k in range(3)] for r in range(3)]
@@ -72,7 +71,12 @@ def cart_to_joint_rates(angles, vel, eps=0.25):
     """Tool-tip velocity -> joint rates at the pose `angles`.
 
     angles: JointAngles (deg); vel: (vx, vy, vz) mm/s in the base frame.
-    Returns {"x": deg/s, "y": deg/s, "z": deg/s}. ValueError near a singularity.
+    Returns {"x": deg/s, "y": deg/s, "z": deg/s}.
+
+    Damped least squares, q = J^T (J J^T + lambda^2 I)^-1 v: identical to the exact
+    inverse away from singular poses (arm fully out or folded), but there it stays
+    bounded and still moves the directions that CAN move, instead of blowing up
+    or freezing -- so you can always jog back out of an extreme pose.
     """
     base = kinematics.forward(angles)
     cols = []
@@ -82,5 +86,8 @@ def cart_to_joint_rates(angles, vel, eps=0.25):
         p = kinematics.forward(JointAngles(**d))
         cols.append(((p.x - base.x) / eps, (p.y - base.y) / eps, (p.z - base.z) / eps))
     jac = [[cols[c][r] for c in range(3)] for r in range(3)]      # mm per degree
-    qx, qy, qz = _solve3(jac, list(vel))
+    jjt = [[sum(jac[i][k] * jac[j][k] for k in range(3)) + (DAMPING ** 2 if i == j else 0.0)
+            for j in range(3)] for i in range(3)]
+    y = _solve3(jjt, list(vel))
+    qx, qy, qz = (sum(jac[i][c] * y[i] for i in range(3)) for c in range(3))
     return {"x": qx, "y": qy, "z": qz}

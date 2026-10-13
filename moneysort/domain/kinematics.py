@@ -23,6 +23,8 @@ fresh grid if the mechanism changes; ~1 cm residual is the linkage vs this form.
 import math
 from dataclasses import dataclass
 
+from moneysort.config import SHOULDER_MAX_DEG
+
 # --- fitted geometry (mm) -------------------------------------------------
 UPPER_ARM_MM = 161.2   # L1
 FOREARM_MM = 210.1     # LF
@@ -30,7 +32,7 @@ TOOL_REACH_MM = 131.7  # LT  (level tool's constant horizontal reach)
 V_OFFSET_MM = 168.2    # D   (base-plate -> effective vertical zero)
 
 # --- joint limits (degrees) -----------------------------------------------
-Y_MIN, Y_MAX = 0.0, 90.0
+Y_MIN, Y_MAX = 0.0, float(SHOULDER_MAX_DEG)   # shoulder stalls fully extended; see config
 X_MIN, X_MAX = -90.0, 0.0
 Z_MIN, Z_MAX = -180.0, 180.0     # base yaw: half a turn each way from zero
 

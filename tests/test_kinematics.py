@@ -31,7 +31,7 @@ class TestForward(unittest.TestCase):
 class TestRoundTrip(unittest.TestCase):
     def test_fk_then_ik_recovers_angles(self):
         """forward()->inverse() round-trips across the whole joint range."""
-        for y in range(0, 91, 10):
+        for y in range(0, int(k.Y_MAX) + 1, 10):
             for x in range(-90, 1, 10):
                 for z in range(-150, 151, 60):
                     ang = JointAngles(x=float(x), y=float(y), z=float(z))

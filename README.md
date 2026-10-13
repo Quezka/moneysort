@@ -23,7 +23,7 @@ direct-3.3 V wiring (no level shifter). Shared enable on GPIO26 (active-low).
 | Axis | Joint | STEP / DIR | Home switch | Range |
 |------|-------|-----------|-------------|-------|
 | **x** | elbow | GPIO5 / GPIO6 | GPIO7 | 0 to -90 deg |
-| **y** | shoulder | GPIO17 / GPIO27 | GPIO8 | 0 to 90 deg |
+| **y** | shoulder | GPIO17 / GPIO27 | GPIO8 | 0 to 80 deg |
 | **z** | base | GPIO23 / GPIO24 | none | continuous |
 
 Measured arm geometry: upper arm 220 mm, forearm 310 mm, shoulder pivot 120 mm

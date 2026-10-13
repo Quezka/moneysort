@@ -15,6 +15,17 @@ GPIOCHIP = 0         # lgpio.gpiochip_open() index
 # the Steppers) because lgpio can't let three Steppers each claim the same pin.
 ENABLE_PIN = 26      # BCM GPIO26 = header pin 37
 
+# --- shoulder travel limit --------------------------------------------------
+# The shoulder motor stalls (loses steps) when the arm is fully extended: the
+# gravity moment is largest with the upper arm horizontal (90 deg). Stop short of
+# that. Raise it only if the motor proves it can hold the pose; if it stalls
+# anyway, lower it and re-home (a stall un-syncs the open-loop position).
+SHOULDER_MAX_DEG = 80
+
+# Return-to-zero speed (pps). Slower than the 20000 pps cruise: it can start from a
+# fully extended pose, where the shoulder has the least torque to spare.
+RETURN_ZERO_PPS = 6000
+
 # --- per-axis config (BCM pins + calibration) -----------------------------
 #   step, dir     : BCM gpio for PUL+ / DIR+
 #   invert        : flip if positive moves the "wrong" way
@@ -28,7 +39,7 @@ ENABLE_PIN = 26      # BCM GPIO26 = header pin 37
 JOINTS = {
     "x": {"step": 5,  "dir": 6,  "invert": False, "travel": 33000,
           "steps_per_rev": 132000, "home_pin": 7, "home_dir": 1},             # elbow: 0..-33000 steps = 0..-90 deg, home (0) toward +steps
-    "y": {"step": 17, "dir": 27, "invert": False, "travel": 33000,
+    "y": {"step": 17, "dir": 27, "invert": False, "travel": round(SHOULDER_MAX_DEG / 360 * 132000),
           "steps_per_rev": 132000, "home_pin": 8, "home_dir": -1},            # shoulder: 0..33000 steps = 0..90 deg, home (0) toward -steps
     "z": {"step": 23, "dir": 24, "invert": False, "steps_per_rev": 157005,
           "limit_deg": 180},                                                  # base: 360 deg = 157005 steps (90 deg = 39251); no switch -> hard-limited to +/-180 deg from zero

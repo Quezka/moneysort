@@ -52,10 +52,12 @@ class TestCartRates(unittest.TestCase):
         self.assertAlmostEqual((p1.y - p0.y) / dt, v[1], delta=0.2)
         self.assertAlmostEqual((p1.z - p0.z) / dt, v[2], delta=0.2)
 
-    def test_singular_pose_raises(self):
-        """Upper arm vertical + forearm straight down: elbow and shoulder both only change reach."""
-        with self.assertRaises(ValueError):
-            jog.cart_to_joint_rates(JointAngles(x=-90, y=0, z=0), (1, 0, 0))
+    def test_singular_pose_stays_bounded(self):
+        """Upper arm vertical + forearm straight down: elbow and shoulder only change reach."""
+        q = jog.cart_to_joint_rates(JointAngles(x=-90, y=0, z=0), (40, 0, 0))
+        self.assertTrue(all(abs(v) < 60 for v in q.values()), q)    # no blow-up
+        q = jog.cart_to_joint_rates(JointAngles(x=-90, y=0, z=0), (0, 0, 40))
+        self.assertTrue(all(abs(v) < 60 for v in q.values()), q)
 
 
 class TestArmFrame(unittest.TestCase):
