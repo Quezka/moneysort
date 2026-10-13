@@ -208,32 +208,28 @@ PAGE = """<!doctype html><html lang="it"><head>
       function show(m) { var e = document.getElementById("jserr"); if (!e) return;
         e.style.display = "block"; e.textContent = "JS: " + m; }
       window.onerror = function (msg, src, line, col) { show(msg + " (line " + line + ":" + col + ")"); };
-      // Touch fallback: some kiosk WebKit builds fire no "click" after a tap on a button (it just
-      // animates). If a short tap ends on a button and no click follows, click it ourselves.
-      var lastClick = 0, sx = 0, sy = 0, tracing = [], evlog = [];
-      // Event trace (bottom-left): which input events actually reach the page. Diagnostic for the kiosk.
-      ["touchstart", "touchend", "pointerdown", "pointerup", "mousedown", "mouseup", "click"].forEach(function (n) {
+      // Tap fallback. Diagnosed on the kiosk (WPE WebKit 2.48): a tap on a button delivers
+      // pointerdown/mousedown/pointerup/mouseup but NO "click" (and no touch events), so every
+      // onclick handler stayed silent. If a press and release land on the same button and no
+      // native click follows, click it ourselves.
+      var lastClick = 0, down = null;
+      function xy(e) { var t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
+        return [t.clientX, t.clientY]; }
+      function btnOf(e) { return e.target && e.target.closest ? e.target.closest("button") : null; }
+      document.addEventListener("click", function () { lastClick = Date.now(); }, true);
+      ["pointerdown", "mousedown", "touchstart"].forEach(function (n) {
         document.addEventListener(n, function (e) {
-          var t = e.target, el = document.getElementById("evlog");
-          evlog.push(n + ":" + (t && (t.id || t.tagName)));
-          if (evlog.length > 5) evlog.shift();
-          if (el) el.textContent = evlog.join("   ");
+          var b = btnOf(e); down = b ? { b: b, p: xy(e) } : null;
         }, true);
       });
-      function trace(m) { tracing.push(m); if (tracing.length > 4) tracing.shift(); }
-      document.addEventListener("click", function () { lastClick = Date.now(); }, true);
-      document.addEventListener("touchstart", function (e) {
-        var t = e.touches && e.touches[0]; if (t) { sx = t.clientX; sy = t.clientY; }
-      }, true);
-      document.addEventListener("touchend", function (e) {
-        var t = e.changedTouches && e.changedTouches[0];
-        var b = e.target && e.target.closest ? e.target.closest("button") : null;
-        if (!b || !t || Math.abs(t.clientX - sx) > 20 || Math.abs(t.clientY - sy) > 20) return;
-        var at = Date.now();
-        setTimeout(function () {
-          if (lastClick < at) { trace("tap->click " + (b.id || b.className)); b.click(); }
-        }, 300);
-      }, true);
+      ["pointerup", "mouseup", "touchend"].forEach(function (n) {
+        document.addEventListener(n, function (e) {
+          var b = btnOf(e), p = xy(e);
+          if (!down || !b || b !== down.b || Math.abs(p[0] - down.p[0]) > 20 || Math.abs(p[1] - down.p[1]) > 20) return;
+          var at = Date.now();
+          setTimeout(function () { if (lastClick < at) b.click(); }, 150);   // pointerup+mouseup: 2nd sees the 1st click
+        }, true);
+      });
       window.addEventListener("unhandledrejection", function (ev) { show("promise: " + (ev.reason && ev.reason.message || ev.reason)); });
     })();
   </script>
