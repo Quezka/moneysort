@@ -36,6 +36,8 @@ the documented CLI paths don't change).
   - `calibration.py` — camera→base rigid transform (`CameraCalib.to_base`,
     `at_survey`), loaded from the git-ignored `camera_calib.json`; armd's
     `/detect` adds `base_mm` per coin and `at_survey` (valid only at the survey pose).
+  - `jog.py` — continuous-jog maths: `slew` (bounded accel), `take_steps` (fractional
+    carry), `cart_to_joint_rates` (numeric Jacobian of the FK).
   - `config.py` (package root) — single source of truth: `PORT`, `ENABLE_PIN`,
     `GPIOCHIP`, `JOINTS` (pins + calibration).
 - **`hardware/stepper.py`** (`Stepper`) — per-axis STEP/DIR via `lgpio.tx_pulse`
@@ -52,6 +54,9 @@ the documented CLI paths don't change).
   - `arm.py` (`Arm`) — `move`, `move_many` (coordinated), homing (`find_home`,
     `home_all`), `return_zero`, `zero`, shared `enable`/`disable` with an `abort`
     Event, homed-aware soft limits.
+  - `ArmController.jog` — hold-to-move with a dead-man (`POST /jog`, ~0.25 s TTL): a
+    jog thread feeds 40 ms step slices (`Stepper.queue_slice`) so motion is
+    continuous and stops by itself if heartbeats stop. Joint (deg/s) or cartesian (mm/s).
   - `controller.py` (`ArmController`) — serializes motion (one move at a time),
     latched e-stop, assembles `status()`.
 - **`interface/`** — delivery:

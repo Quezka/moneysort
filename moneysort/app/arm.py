@@ -107,6 +107,18 @@ class Arm:
         steps = self._clamp_steps(name, int(steps))
         self.motors[name].move(steps, max_pps=max_pps)
 
+    def jog_slice(self, steps, dt):
+        """Queue one jog slice per axis ({axis: signed steps}) to play over `dt` s.
+
+        Soft limits apply (same clamp as move). Returns the steps actually queued,
+        so the caller can see an axis that hit its limit."""
+        done = {}
+        for name, n in steps.items():
+            n = self._clamp_steps(name, int(n))
+            done[name] = n
+            self.motors[name].queue_slice(n, dt)
+        return done
+
     def move_degrees(self, name, degrees, max_pps=None):
         m = self.motors[name]
         self.move(name, round(degrees / 360.0 * m.eff_spr), max_pps=max_pps)

@@ -15,6 +15,7 @@ over HTTP instead of by claiming GPIO directly:
     GET  /status           -> system + live arm state (JSON)
     POST /move             -> {"axis":"z","steps":800,"pps":4000}
     POST /detect           -> coins in camera frame (+ base_mm when camera_calib.json exists)
+    POST /jog              -> hold-to-move: {"rates":{"x":deg/s,..}} or {"cart":{"x":mm/s,..}}, repeat within ~0.25s
     POST /move_to          -> {"x":..,"y":..,"z":..} tool tip to a point (mm, via IK)
     POST /return_zero      -> drive every axis back to its zero (no switch seek)
     POST /home             -> home all: x/y seek switches, z returns to zero
@@ -26,6 +27,7 @@ Runs as a systemd service (see deploy/). Jog with arm_test.py, which is now an
 HTTP client rather than a direct-GPIO script.
 """
 import json
+import math
 import os
 import signal
 import socket
@@ -36,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from moneysort.config import PORT
 from moneysort.app.controller import ArmController
 from moneysort.domain import calibration
+from moneysort.domain import kinematics
 from moneysort.domain.kinematics import Point
 from moneysort.hardware.camera import Camera
 from moneysort.interface import dashboard   # metric helpers, PAGE, system_action
@@ -44,6 +47,28 @@ CALIB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "camera_calib.json")   # written by tools/calibrate_camera.py
 
 BUILD = str(int(time.time()))               # changes each daemon start -> kiosk auto-reloads
+
+
+def with_base(coins, joints):
+    """Add base_mm to detections when camera_calib.json exists.
+
+    Returns (calib or None, at_survey or None). base_mm is only trustworthy when
+    at_survey is true (the camera is eye-in-hand)."""
+    calib = calibration.load(CALIB_PATH)               # re-read: no restart after recalibrating
+    if not calib:
+        return None, None
+    for c in coins:
+        c["base_mm"] = calib.to_base(c["cam_mm"])
+    return calib, calib.at_survey(joints)
+
+
+def tool_tip(joints):
+    """Forward kinematics of the live joint angles -> tip position (mm), or None."""
+    try:
+        p = kinematics.forward(kinematics.JointAngles(x=joints["x"], y=joints["y"], z=joints["z"]))
+    except (KeyError, TypeError):
+        return None
+    return {"x": round(p.x), "y": round(p.y), "z": round(p.z), "r": round(math.hypot(p.x, p.y))}
 
 
 def build_status(ctrl, camera):
@@ -61,8 +86,10 @@ def build_status(ctrl, camera):
         "motors_enabled": st["enabled"],
         "estopped": st["estopped"],
         "arm": {"joints": st["joints"], "moving": st["moving"],
-                "homed": st["homed"], "home": st["home"], "_age": 0.0},
-        "camera": {"ok": camera.ok, "desc": camera.desc, "error": camera.error},
+                "homed": st["homed"], "home": st["home"], "_age": 0.0,
+                "tip": tool_tip(st["joints"])},
+        "camera": {"ok": camera.ok, "desc": camera.desc, "error": camera.error,
+                   "calibrated": os.path.exists(CALIB_PATH)},
         "build": BUILD,
         "time": time.strftime("%H:%M:%S"),
     }
@@ -73,12 +100,14 @@ def make_handler(ctrl, camera):
         def log_message(self, *a):
             pass
 
-        def _send(self, body, ctype="application/json", code=200):
+        def _send(self, body, ctype="application/json", code=200, extra=None):
             data = body.encode() if isinstance(body, str) else body
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")     # always serve fresh HTML/JSON
+            for k, v in (extra or {}).items():
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(data)
 
@@ -103,11 +132,15 @@ def make_handler(ctrl, camera):
                 else:
                     self._send(jpg, "image/jpeg")
             elif self.path.startswith("/detected"):        # annotated frame (JPEG)
-                _, jpg = camera.detect() if camera.ok else ([], None)
+                coins, jpg = camera.detect() if camera.ok else ([], None)
                 if jpg is None:
                     self._send(json.dumps({"error": camera.error or "no frame"}), code=503)
                 else:
-                    self._send(jpg, "image/jpeg")
+                    _, at_survey = with_base(coins, ctrl.status()["joints"])
+                    self._send(jpg, "image/jpeg", extra={"X-Coins": json.dumps(
+                        {"at_survey": at_survey, "coins": [
+                            {"r": c["r"], "cam": c["cam_mm"], "base": c.get("base_mm")}
+                            for c in coins]})})
             else:
                 self._send(dashboard.PAGE, "text/html; charset=utf-8")
 
@@ -137,13 +170,7 @@ def make_handler(ctrl, camera):
             try:
                 if self.path.startswith("/detect"):
                     coins, _ = camera.detect(**self._body())
-                    calib = calibration.load(CALIB_PATH)       # re-read: no restart after recalibrating
-                    at_survey = None
-                    if calib:
-                        at_survey = calib.at_survey(ctrl.status()["joints"])
-                        for c in coins:
-                            c["base_mm"] = calib.to_base(c["cam_mm"])
-                    # base_mm is only trustworthy when at_survey is true (eye-in-hand camera)
+                    calib, at_survey = with_base(coins, ctrl.status()["joints"])
                     self._send(json.dumps({"ok": True, "coins": coins,
                                            "calibrated": calib is not None,
                                            "at_survey": at_survey}))
@@ -154,6 +181,13 @@ def make_handler(ctrl, camera):
                     ctrl.enable()
                 elif self.path.startswith("/zero"):
                     ctrl.zero()
+                elif self.path.startswith("/jog"):
+                    b = self._body()
+                    c = b.get("cart")
+                    ctrl.jog(rates=b.get("rates"),
+                             cart=(c["x"], c["y"], c["z"]) if c else None, ttl=b.get("ttl"))
+                    self._send(json.dumps({"ok": True}))     # hot path: no status
+                    return
                 elif self.path.startswith("/move_to"):
                     b = self._body()
                     ctrl.move_to(Point(float(b["x"]), float(b["y"]), float(b["z"])),

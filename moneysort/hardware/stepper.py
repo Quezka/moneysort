@@ -53,6 +53,7 @@ class Stepper:
         self.accel_steps = accel_steps
         self.abort = abort if abort is not None else threading.Event()
         self.position = 0                           # net steps from home
+        self._dir_level = None                      # last DIR level written (jog slices)
 
         lgpio.gpio_claim_output(handle, step_pin, 0)
         lgpio.gpio_claim_output(handle, dir_pin, 0)
@@ -87,6 +88,7 @@ class Stepper:
 
     def set_dir(self, level):
         lgpio.gpio_write(self.h, self.dir_pin, level)
+        self._dir_level = level
 
     def try_queue(self, pps, cycles):
         """Non-blocking: queue one burst if the tx queue has room, else False."""
@@ -129,6 +131,26 @@ class Stepper:
 
     def go_home(self, max_pps=None):
         self.move(-self.position, max_pps=max_pps)
+
+    def queue_slice(self, steps, dt):
+        """Queue `steps` (signed) to play over `dt` seconds, without waiting for them.
+
+        For continuous jogging: the caller feeds one short slice per tick, so the
+        motor keeps running at the commanded speed between ticks. A direction
+        change first lets the queue drain (never flip DIR under a running train).
+        Position is advanced at queue time (an e-stop un-homes everything anyway).
+        """
+        if steps == 0 or self.abort.is_set():
+            return
+        level = (1 if steps < 0 else 0) ^ int(self.invert_dir)
+        if level != self._dir_level:
+            while self.busy() and not self.abort.is_set():
+                time.sleep(0.002)
+            self.set_dir(level)
+            time.sleep(0.001)                  # DIR setup time
+        n = abs(steps)
+        self._burst(min(max(n / dt, 1), self.max_pps), n)
+        self.position += steps
 
     def jog(self, steps, pps):
         """Constant-speed move with no accel ramp -- for slow homing chunks."""

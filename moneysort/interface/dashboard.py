@@ -128,6 +128,18 @@ PAGE = """<!doctype html><html lang="it"><head>
   .joints { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   .cammain { display: flex; gap: 14px; align-items: flex-start; margin-top: 4px; flex-wrap: wrap; }
   .camcol { flex: 0 0 auto; }
+  .infocol { flex: 1 1 260px; min-width: 240px; display: flex; flex-direction: column; gap: 10px; }
+  .infocol .section { margin: 0 0 -4px; }
+  .xyz { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .xyz .value { font-size: 24px; }
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .badge { padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 700;
+           background: #21262d; color: #6e7681; border: 1px solid #30363d; }
+  .badge.on { background: #15271a; color: #3fb950; border-color: #238636; }
+  .badge.warn { background: #2a2413; color: #d29922; border-color: #7d5f13; }
+  .coins { max-height: 150px; overflow: hidden; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .coin { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-top: 1px solid #21262d; }
+  .coin:first-child { border-top: none; }
   .ctrlcol { flex: 0 0 220px; margin-left: auto; display: flex; flex-direction: column; gap: 8px; }
   .controls.vert { flex-direction: column; align-items: stretch; margin-top: 0; gap: 8px; }
   .controls.vert button { width: 100%; }
@@ -192,6 +204,14 @@ PAGE = """<!doctype html><html lang="it"><head>
         <div id="camoff" class="camoff" data-t>camera offline</div>
       </div>
     </div>
+    <div class="infocol">
+      <div class="section"><span data-t>Tool position</span></div>
+      <div class="card"><div class="xyz" id="tip"></div><div class="sub" id="reach"></div></div>
+      <div class="section"><span data-t>Axes</span></div>
+      <div class="card"><div class="badges" id="axes"></div></div>
+      <div class="section"><span data-t>Coins detected</span> <span id="coincount" class="idle" style="font-size:13px"></span></div>
+      <div class="card"><div class="coins" id="coins"></div><div class="badges" id="calstate"></div></div>
+    </div>
     <div class="ctrlcol">
       <div class="controls vert">
         <button id="estop" class="estop">&#9940; <span data-t>EMERGENCY DISABLE</span></button>
@@ -214,6 +234,10 @@ PAGE = """<!doctype html><html lang="it"><head>
 <script>
 // The screen is in Italian; add ?lang=en to the address for English.
 const IT = {
+  "Tool position": "Posizione utensile", "Axes": "Assi", "Coins detected": "Monete rilevate",
+  "reach": "sbraccio", "homed": "azzerato", "not homed": "non azzerato",
+  "no coins in view": "nessuna moneta inquadrata", "calibrated": "calibrata",
+  "not calibrated": "non calibrata", "away from survey pose": "fuori dalla posa di rilievo",
   "Robot Arm": "Braccio robotico", "Camera": "Fotocamera", "camera offline": "fotocamera offline",
   "camera feed": "immagine della fotocamera",
   "EMERGENCY DISABLE": "ARRESTO DI EMERGENZA", "Re-enable motors": "Riattiva i motori",
@@ -299,12 +323,23 @@ async function tick() {
     ).join("");
   }
 
+  const tip = a && a.tip, homedAx = (a && a.homed) || [];
+  document.getElementById("tip").innerHTML = ["x", "y", "z"].map(k =>
+    `<div><div class="label">${k.toUpperCase()}</div><div class="value">${tip ? tip[k] : "&mdash;"}<span class="unit"> mm</span></div></div>`).join("");
+  document.getElementById("reach").textContent = tip ? t("reach") + " " + tip.r + " mm" : "";
+  document.getElementById("axes").innerHTML = ["x", "y", "z"].map(k => {
+    const on = k === "z" || homedAx.includes(k);     // z has no switch
+    return `<span class="badge ${on ? "on" : "warn"}">${k.toUpperCase()} · ${on ? t("homed") : t("not homed")}</span>`;
+  }).join("");
+
   const en = d.motors_enabled, estop = document.getElementById("estop"), reen = document.getElementById("reenable");
   if (en === false) { estop.textContent = t("MOTORS DISABLED"); estop.classList.add("off"); reen.style.display = ""; }
   else if (en === true) { estop.innerHTML = "&#9940; " + t("EMERGENCY DISABLE"); estop.classList.remove("off"); reen.style.display = "none"; }
 
   const cam = d.camera || {}, cdot = document.getElementById("camdot");
   const cimg = document.getElementById("cam"), coff = document.getElementById("camoff");
+  document.getElementById("calstate").innerHTML = cam.ok
+    ? `<span class="badge ${cam.calibrated ? "on" : "warn"}">${cam.calibrated ? t("calibrated") : t("not calibrated")}</span>` : "";
   cdot.className = cam.ok ? "dot live" : "dot";
   document.getElementById("camstate").textContent = cam.ok ? (cam.desc || t("live")) : (cam.error || t("offline"));
   if (cam.ok) { coff.style.display = "none"; cimg.style.display = ""; }   // pollCam sets the image
@@ -366,6 +401,18 @@ document.getElementById("reboot").onclick = () => { if (confirm(t("Reboot the Pi
 document.getElementById("poweroff").onclick = () => { if (confirm(t("Power OFF the Pi?"))) { toast(t("Powering off…"), "warn", 8000); post("/poweroff"); } };
 tick(); setInterval(tick, 1500);
 
+function showCoins(hdr) {
+  let c = {coins: []}; try { c = JSON.parse(hdr) || c; } catch {}
+  document.getElementById("coincount").textContent = c.coins.length || "";
+  const box = document.getElementById("coins");
+  if (!c.coins.length) { box.innerHTML = `<span class="idle">${t("no coins in view")}</span>`; return; }
+  const away = c.at_survey === false ? `<div class="sub warn">${t("away from survey pose")}</div>` : "";
+  box.innerHTML = c.coins.slice(0, 5).map((k, i) => {
+    const p = k.base || k.cam, tag = k.base ? "" : " (cam)";
+    return `<div class="coin"><span>#${i + 1} &empty;${2 * k.r}px</span><span>${p.map(Math.round).join(", ")} mm${tag}</span></div>`;
+  }).join("") + away;
+}
+
 // Poll the annotated frame (works on WebKit/cog where MJPEG <img> doesn't).
 let camUrl = null, camBusy = false;
 async function pollCam() {
@@ -374,6 +421,7 @@ async function pollCam() {
   try {
     const r = await fetch("/detected?t=" + Date.now());
     if (r.ok) {
+      showCoins(r.headers.get("X-Coins"));
       const url = URL.createObjectURL(await r.blob());
       const img = document.getElementById("cam");
       img.onload = img.onerror = () => { if (camUrl) URL.revokeObjectURL(camUrl); camUrl = url; };
