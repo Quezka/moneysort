@@ -23,6 +23,7 @@ class FakeLgpio(types.ModuleType):
         self.pulses = []             # (cycles) in order
         self.infinite = False        # an infinite burst is the last thing queued
         self.full_until = 0.0        # queue reports full until this monotonic time
+        self.cancelled = 0           # tx_pulse(0, 0) calls
 
     def gpiochip_open(self, n): return 1
     def gpio_claim_output(self, *a): pass
@@ -38,6 +39,12 @@ class FakeLgpio(types.ModuleType):
         return 8
 
     def tx_pulse(self, h, pin, on, off, off2, cycles):
+        if on == 0 and off == 0:      # lgpio: switch pulses off, delete the queue
+            self.cancelled += 1
+            self.infinite = False
+            self.full_until = 0.0
+            self.full_for = 0
+            return 0
         if time.monotonic() < self.full_until:
             raise self.error("TX queue full")
         if self.full_for > 0:         # queued while tx_room() still says full -> lgpio refuses
@@ -64,6 +71,7 @@ def make():
     fake.full_until = 0.0
     fake.pulses.clear()
     fake.infinite = False
+    fake.cancelled = 0
     return st.Stepper(1, 5, 6, steps_per_rev=1000)
 
 
@@ -115,8 +123,27 @@ class TestTx(unittest.TestCase):
         fake.full_for = 10 ** 9
         threading.Timer(0.05, m.abort.set).start()
         fake.full_for = 10 ** 9
-        # halt ignores abort but the queue never frees -> bounded, returns False
-        self.assertFalse(m.halt(wait=0.05))
+        # halt ignores abort and the queue never frees -> bounded, falls back to a hard cancel
+        self.assertTrue(m.halt(wait=0.05))
+        self.assertGreaterEqual(fake.cancelled, 1)
+
+    def test_wedged_queue_is_cleared_instead_of_needing_a_restart(self):
+        m = make()
+        fake.full_for = 10 ** 9
+        with self.assertRaises(RuntimeError):
+            m._tx(1000, 10, timeout=0.05)
+        self.assertEqual(fake.cancelled, 1)
+        self.assertTrue(m._tx(1000, 10))          # usable again
+
+    def test_jog_direction_flip_on_a_stuck_queue_clears_it(self):
+        m = make()
+        fake.infinite = True                      # busy forever
+        m._dir_level = 1
+        t0 = time.monotonic()
+        with self.assertRaises(RuntimeError):
+            m.queue_slice(+5, 0.04)
+        self.assertLess(time.monotonic() - t0, 3.0)
+        self.assertFalse(fake.infinite)
 
 
 if __name__ == "__main__":

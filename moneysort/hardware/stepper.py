@@ -29,6 +29,7 @@ log = logging.getLogger("armd.stepper")
 # wait is bounded, and a stuck queue becomes an error you can read, not a silent hang.
 ROOM_TIMEOUT_S = 5.0     # max wait for a free slot in the tx queue
 DRAIN_TIMEOUT_S = 30.0   # max wait for queued bursts to finish playing
+DIR_FLIP_TIMEOUT_S = 1.0  # jog: max wait for the queue before reversing DIR (slices are 40 ms)
 
 
 class Stepper:
@@ -88,9 +89,26 @@ class Stepper:
                     if "full" not in str(e).lower():
                         raise
             if time.monotonic() - t0 > timeout:
+                if timeout > 0:
+                    self.cancel()                        # free the axis; the caller still gets the error
                 raise RuntimeError(f"TX queue stuck on GPIO{self.step_pin}: a pulse train is "
                                    "not finishing (e-stop, then restart moneysort-arm if it persists)")
             time.sleep(0.001)
+
+    def cancel(self):
+        """Hard stop: switch the pulse output off and delete everything queued.
+
+        lgpio's documented way (tx_pulse with on = off = 0). Unlike halt() it works
+        even when the queue is full or wedged -- the last resort that frees an axis
+        without restarting the daemon. Pending steps are lost, so position is unsure.
+        """
+        try:
+            lgpio.tx_pulse(self.h, self.step_pin, 0, 0, 0, 0)
+        except lgpio.error as e:
+            log.error("cancel: GPIO%d: %s", self.step_pin, e)
+            return False
+        log.warning("cancelled the pulse queue on GPIO%d", self.step_pin)
+        return True
 
     def _burst(self, pps, cycles):
         """Queue one constant-rate burst of `cycles` pulses at `pps` (blocking)."""
@@ -114,11 +132,10 @@ class Stepper:
         time -- e-stop does, for every axis. Returns False if it could not.
         """
         try:
-            ok = self._tx(self.min_pps, 1, honour_abort=False, timeout=wait)
+            return self._tx(self.min_pps, 1, honour_abort=False, timeout=wait)
         except RuntimeError:
             log.error("halt: could not stop the pulse train on GPIO%d (queue full)", self.step_pin)
-            return False
-        return ok
+            return self.cancel()
 
 
     def plan(self, steps, max_pps=None):
@@ -194,8 +211,9 @@ class Stepper:
         if level != self._dir_level:
             t0 = time.monotonic()
             while self.busy() and not self.abort.is_set():
-                if time.monotonic() - t0 > DRAIN_TIMEOUT_S:
-                    raise RuntimeError(f"TX queue on GPIO{self.step_pin} not draining")
+                if time.monotonic() - t0 > DIR_FLIP_TIMEOUT_S:
+                    self.cancel()                  # a 40 ms slice never takes this long: wedged
+                    raise RuntimeError(f"TX queue on GPIO{self.step_pin} not draining (cleared)")
                 time.sleep(0.002)
             self.set_dir(level)
             time.sleep(0.001)                  # DIR setup time
