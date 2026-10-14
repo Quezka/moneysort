@@ -20,6 +20,8 @@ from moneysort.hardware.stepper import ROOM_TIMEOUT_S, Stepper
 
 log = logging.getLogger("armd.arm")
 
+FINE_SLACK_STEPS = 1500   # extra slow-approach steps allowed beyond the back-off before giving up
+
 
 class Arm:
     def __init__(self, joints=JOINTS, enable_pin=ENABLE_PIN, **stepper_kwargs):
@@ -293,8 +295,17 @@ class Arm:
             m.jog(-hd * fine, slow_pps)
         m.jog(-hd * backoff, slow_pps)
         # 3. slow fine approach until the switch is *solidly* pressed
+        # Bounded: if the switch never reads solidly triggered (flaky contact / loose wire)
+        # the motor would push into the hard stop forever, so give up after a little more
+        # than the back-off distance and say why.
+        pushed = 0
         while not self._stable_home(axis, True) and not self.abort.is_set():
+            if pushed > backoff + FINE_SLACK_STEPS:
+                log.error("find_home %s: switch never read stably triggered after %d steps", axis, pushed)
+                raise RuntimeError(f"home switch {axis.upper()} does not read stably (loose wire / "
+                                   "bouncing contact?): stopped instead of pushing on")
             m.jog(hd * fine, slow_pps)
+            pushed += fine
         if self.abort.is_set():            # e-stopped: don't claim a home
             return
         m.position = 0
