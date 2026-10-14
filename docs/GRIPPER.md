@@ -76,3 +76,13 @@ Pump + valve kits (6 V class, the "Arduino robot arm" kind):
 
 What to look for: pump 5-6 V DC, vacuum at least -40 kPa, a 3-way valve (so the cup vents on release), 4-5 mm nozzle.
 A 6 V part needs its own supply (24 V -> 6 V buck), not the Pi's 5 V rail.
+
+## Pump candidate (screenshot kept)
+
+![Amazon.it listing, HamPaesk 32 mm pump](img/pump-candidate-amazon-hampaesk.png)
+
+Amazon.it, 2026-10-14: "32MM DC 6V-12V Mini Air Oxygen Pump, Large Flow Vacuum with Negative Pressure Suction
+Diaphragm" (brand HamPaesk, ASIN B0FNN55NGD), 24.40 EUR incl. VAT, returnable. Listed: rated 12 V (title says 6-12 V),
+no-load 380 mA, flow > 6 L/min, medium air, two barbed ports. **Max vacuum is not stated** (the number that matters
+for coins: want at least -50 kPa); price is high for this pump class. Ask the seller / read "more product details"
+before buying; a 12 V part needs a 24 -> 12 V buck and a 12 V 3-way valve.
