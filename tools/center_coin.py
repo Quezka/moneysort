@@ -86,6 +86,37 @@ def try_move(dx, dy, scales=(1.0,)):
     return False
 
 
+ROOM_MM = 25.0     # free travel wanted in every X/Y direction around the working pose
+
+
+def has_room(p, room=ROOM_MM):
+    """True if the tool can still move `room` mm each way in X and Y at p's height."""
+    for dx, dy in ((room, 0), (-room, 0), (0, room), (0, -room)):
+        try:
+            kinematics.inverse(Point(p.x + dx, p.y + dy, p.z))
+        except kinematics.OutOfReach:
+            return False
+    return True
+
+
+def ready_pose(p):
+    """Nearest pose to p with room to move sideways at constant height, or None.
+
+    The rest pose is the very corner of the workspace (shoulder and elbow at their
+    zero stops): at that height nothing else is reachable, so a few mm out and down
+    are needed before the centring can nudge the tool around.
+    """
+    if has_room(p):
+        return p
+    cands = sorted(((dr * dr + dz * dz, dr, dz)
+                    for dr in range(-100, 101, 5) for dz in range(0, 101, 5)))
+    for _, dr, dz in cands:
+        q = Point(p.x + dr, p.y, p.z - dz)       # dr along X: the arm points along +X at yaw 0
+        if has_room(q):
+            return q
+    return None
+
+
 def detect():
     """-> (coins, (W, H)). Coins without depth are included (require_depth=False)."""
     r = call("/detect", {"require_depth": False})
@@ -173,6 +204,17 @@ def main():
         sys.exit("fai prima l'homing di x e y (serve per move_to)")
 
     home = tool_tip()
+    if abs(home.y) > 30:
+        sys.exit("braccio ruotato: rimetti la base a zero (guarda verso +X) prima di iniziare")
+    ready = ready_pose(home)
+    if ready is None:
+        sys.exit("non trovo una posa di lavoro raggiungibile da qui: muovi il braccio verso il centro")
+    if ready is not home:
+        print(f"\nDal riposo non c'e' margine per muoversi di lato: porto la punta a X{ready.x:.0f} "
+              f"Z{ready.z:.0f} mm (da X{home.x:.0f} Z{home.z:.0f}).")
+        input("Spazio libero sotto la camera? Invio per spostare il braccio... ")
+        move_to(ready)
+        home = ready
     print(f"\nPosa di partenza: X{home.x:.0f} Y{home.y:.0f} Z{home.z:.0f} mm "
           "(ci torno tra una moneta e l'altra).")
     print("Il braccio si muove solo in X/Y, a quota costante. Tieni la mano vicino all'e-stop.")
