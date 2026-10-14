@@ -214,7 +214,7 @@ PAGE = """<!doctype html><html lang="it"><head>
       var lastClick = 0, down = null;
       function xy(e) { var t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
         return [t.clientX, t.clientY]; }
-      function btnOf(e) { return e.target && e.target.closest ? e.target.closest("button") : null; }
+      function btnOf(e) { return e.target && e.target.closest ? e.target.closest("button, summary") : null; }
       document.addEventListener("click", function () { lastClick = Date.now(); }, true);
       ["pointerdown", "mousedown", "touchstart"].forEach(function (n) {
         document.addEventListener(n, function (e) {
