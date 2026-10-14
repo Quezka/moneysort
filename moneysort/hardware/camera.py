@@ -177,10 +177,16 @@ class Camera:
             img = self._color.copy()
             depth, intr, scale = self._depth, self._intr, self._depth_scale
 
-        def depth_at(x, y):
-            if 0 <= y < depth.shape[0] and 0 <= x < depth.shape[1]:
-                return float(depth[y, x]) * scale     # z16 counts -> metres
-            return 0.0
+        def depth_at(x, y, half=6):
+            # Median of the valid readings in a small patch, not one pixel: the sensor has
+            # holes (shiny metal, USB2's low-res depth) and a single 0 made a near coin yellow.
+            if not (0 <= y < depth.shape[0] and 0 <= x < depth.shape[1]):
+                return 0.0
+            patch = depth[max(y - half, 0):y + half + 1, max(x - half, 0):x + half + 1]
+            valid = patch[patch > 0]
+            if valid.size < max(4, patch.size // 10):  # mostly holes: no trustworthy depth
+                return 0.0
+            return float(np.median(valid)) * scale    # z16 counts -> metres
 
         coins, annotated = vision.detect_coins(
             img, depth_at,

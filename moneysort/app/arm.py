@@ -85,7 +85,7 @@ class Arm:
         self._enabled = False
         self.homed.clear()
         for name, m in self.motors.items():       # end any running (even infinite) pulse train
-            if m.busy() and not m.halt(wait=0.3):
+            if m.busy() and not m.cancel():           # e-stop = hard stop, not "queue one more cycle"
                 log.error("e-stop: axis %s pulse train could not be stopped", name)
 
     @property
