@@ -69,6 +69,23 @@ def move_to(p):
     time.sleep(SETTLE_S)
 
 
+def try_move(dx, dy, scales=(1.0,)):
+    """Move the tool by (dx, dy) mm, shrinking the step if the target is out of reach.
+
+    Returns True if a move was made, False if even the smallest step is unreachable
+    (e.g. the home pose is the arm's maximum radial reach, so +X can't go further).
+    """
+    p = tool_tip()
+    for sc in scales:
+        try:
+            move_to(Point(p.x + dx * sc, p.y + dy * sc, p.z))
+            return True
+        except (RuntimeError, kinematics.OutOfReach) as e:
+            if "range" not in str(e).lower() and "reach" not in str(e).lower():
+                raise
+    return False
+
+
 def detect():
     """-> (coins, (W, H)). Coins without depth are included (require_depth=False)."""
     r = call("/detect", {"require_depth": False})
@@ -92,16 +109,22 @@ def centre_coin(prev=None):
     # --- probe the image Jacobian -------------------------------------------
     start = tool_tip()
     seen = [coin]
+    probes = []
     for dx, dy in ((PROBE_MM, 0.0), (0.0, PROBE_MM)):
-        p = tool_tip()
-        move_to(Point(p.x + dx, p.y + dy, p.z))
+        before = tool_tip()
+        for sign in (1, -1):                  # try the other way if one is out of reach
+            if try_move(sign * dx, sign * dy):
+                break
+        else:
+            return False, "fuori portata in ogni direzione: porta il braccio piu' al centro dell'area di lavoro"
+        after = tool_tip()
+        moved = (after.x - before.x, after.y - before.y)    # what the arm really did
         coins, _ = detect()
         c = centering.nearest(coins, (seen[-1]["px"], seen[-1]["py"]))
         if c is None or math.hypot(c["px"] - seen[-1]["px"], c["py"] - seen[-1]["py"]) > 200:
             return False, "ho perso la moneta durante la calibrazione dei movimenti"
+        probes.append((moved, (c["px"] - seen[-1]["px"], c["py"] - seen[-1]["py"])))
         seen.append(c)
-    probes = [((PROBE_MM, 0.0), (seen[1]["px"] - seen[0]["px"], seen[1]["py"] - seen[0]["py"])),
-              ((0.0, PROBE_MM), (seen[2]["px"] - seen[1]["px"], seen[2]["py"] - seen[1]["py"]))]
     try:
         jac = centering.solve_image_jacobian(probes)
     except ValueError as e:
@@ -120,8 +143,8 @@ def centre_coin(prev=None):
             return False, "l'errore sta aumentando: mi fermo"
         best = dist if best is None else min(best, dist)
         dx, dy = centering.step_mm(jac, err)
-        p = tool_tip()
-        move_to(Point(p.x + dx, p.y + dy, p.z))
+        if not try_move(dx, dy, scales=(1.0, 0.5, 0.25)):
+            return False, "la moneta e' al limite dell'area raggiungibile: avvicinala al centro"
         coins, _ = detect()
         nxt = centering.nearest(coins, (coin["px"], coin["py"]))
         if nxt is None:
