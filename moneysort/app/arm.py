@@ -265,12 +265,28 @@ class Arm:
             time.sleep(poll)
         return True
 
+    def _pressed(self, axis, reads, need, poll):
+        """True if the switch reads HIGH at least `need` times in `reads` reads (not consecutive).
+
+        Tolerates a worn contact that chatters while pressed (HIGH only now and then),
+        yet an open switch at rest reads LOW every time, so `need` > 1 hits rejects noise.
+        """
+        hits = 0
+        for i in range(reads):
+            if self.at_home(axis):
+                hits += 1
+                if hits >= need:
+                    return True
+            if i + 1 < reads:
+                time.sleep(poll)
+        return False
+
     def find_home(self, axis, fast_pps=15000, slow_pps=500,
                   backoff=800, fine=8):
         """Seek the home switch and define that point as position 0.
 
         Fast approach to first touch -> back off until released (+ clearance)
-        -> slow fine approach until the switch reads *stably* triggered. Bails
+        -> slow fine approach until the switch reads triggered (>=2 HIGH in ~40 ms: tolerates a chattering contact). Bails
         immediately (without zeroing) if the e-stop abort fires mid-seek.
         """
         c = self.cfg[axis]
@@ -285,7 +301,7 @@ class Arm:
         # the way at slow_pps. Require a few consecutive HIGH reads; while the
         # switch is open this returns on the first (LOW) read, so it costs
         # nothing during the approach.
-        confirmed = lambda: self._stable_home(axis, True, n=3, poll=0.0004)
+        confirmed = lambda: self._pressed(axis, reads=4, need=2, poll=0.0004)
 
         # 1. fast approach to first touch (skip only if really on the switch)
         if not confirmed():
@@ -299,7 +315,7 @@ class Arm:
         # the motor would push into the hard stop forever, so give up after a little more
         # than the back-off distance and say why.
         pushed = 0
-        while not self._stable_home(axis, True) and not self.abort.is_set():
+        while not self._pressed(axis, reads=80, need=2, poll=0.0005) and not self.abort.is_set():
             if pushed > backoff + FINE_SLACK_STEPS:
                 log.error("find_home %s: switch never read stably triggered after %d steps", axis, pushed)
                 raise RuntimeError(f"home switch {axis.upper()} does not read stably (loose wire / "
