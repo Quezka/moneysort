@@ -9,8 +9,28 @@ detection logic can be exercised with a plain image + stub callables.
 import cv2
 import numpy as np
 
-DEFAULTS = dict(min_r=18, max_r=70, min_dist=40, param2=32, min_z=0.20, max_z=0.60,
+DEFAULTS = dict(min_r=18, max_r=45, min_dist=22, param2=26, min_z=0.20, max_z=0.60,
                 require_depth=True, highlight=None)   # highlight=(px, py): mark the coin there
+
+
+def _find_circles(img, p):
+    """Hough circles on brightness AND on colour saturation, merged.
+
+    Coins differ in colour: a silver one next to gold ones has almost no brightness edge, but
+    stands out in saturation (and vice versa). Running both and merging finds all of them. Coins
+    in a pile overlap, so min_dist is small; max_r drops the big false circles on cardboard.
+    """
+    chans = (cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[:, :, 1])
+    found = []
+    for ch in chans:
+        c = cv2.HoughCircles(cv2.medianBlur(ch, 5), cv2.HOUGH_GRADIENT, dp=1.2, minDist=p["min_dist"],
+                             param1=100, param2=p["param2"], minRadius=p["min_r"], maxRadius=p["max_r"])
+        if c is None:
+            continue
+        for x, y, r in c[0]:
+            if all((x - fx) ** 2 + (y - fy) ** 2 > (0.7 * min(r, fr)) ** 2 for fx, fy, fr in found):
+                found.append((x, y, r))
+    return np.array([found], dtype=np.float32) if found else None
 
 
 def detect_coins(bgr, depth_at, deproject, *, square=True, **params):
@@ -33,10 +53,7 @@ def detect_coins(bgr, depth_at, deproject, *, square=True, **params):
         ox = oy = 0
         img = bgr
 
-    gray = cv2.medianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 5)
-    circles = cv2.HoughCircles(
-        gray, cv2.HOUGH_GRADIENT, dp=1.2, minDist=p["min_dist"],
-        param1=100, param2=p["param2"], minRadius=p["min_r"], maxRadius=p["max_r"])
+    circles = _find_circles(img, p)
 
     out = img.copy()
     coins = []

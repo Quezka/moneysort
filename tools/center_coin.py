@@ -339,6 +339,7 @@ def centre_coin(prev=None, relearned=False):
 
     # --- close the loop (step moves; the old way) ---------------------------
     best = None
+    step_scale = 1.0                            # halved after losing the coin: smaller, safer steps
     for i in range(MAX_ITERS):
         err = centering.error_px(coin, target)
         dist = math.hypot(*err)
@@ -353,15 +354,28 @@ def centre_coin(prev=None, relearned=False):
                 return centre_coin(prev, relearned=True)
             return False, "l'errore sta aumentando: mi fermo"
         best = dist if best is None else min(best, dist)
-        dx, dy = centering.step_mm(jac, err, gain=GAIN, max_mm=MAX_STEP_MM)
+        dx, dy = centering.step_mm(jac, err, gain=GAIN * step_scale, max_mm=MAX_STEP_MM * step_scale)
         moved = try_move(dx, dy, scales=(1.0, 0.5, 0.25), z_floor=floor_z)
         if not moved:
             return False, "la moneta e' al limite dell'area raggiungibile: avvicinala al centro"
         coins, _ = detect()
         expected = centering.predict_px(jac, (coin["px"], coin["py"]), moved)
         nxt = centering.track(coins, expected, TRACK_GATE_PX)
-        if nxt is None:
-            return False, "ho perso la moneta"
+        for _ in range(2):                      # a missed detection is often just one bad frame
+            if nxt is not None:
+                break
+            time.sleep(0.4)
+            coins, _ = detect()
+            nxt = centering.track(coins, expected, TRACK_GATE_PX * 2)
+        if nxt is None:                         # still gone: go back to where it was last seen
+            print("  persa: torno dove l'avevo vista e riprovo con passi piu' piccoli")
+            if try_move(-moved[0], -moved[1], z_floor=floor_z) is None:
+                return False, "ho perso la moneta e non riesco a tornare indietro"
+            coins, _ = detect()
+            nxt = centering.track(coins, (coin["px"], coin["py"]), LOCK_GATE_PX)
+            if nxt is None:
+                return False, "ho perso la moneta"
+            step_scale = max(step_scale * 0.5, 0.25)
         coin = nxt
         lock_to(coin)
     centre_coin.last = coin
