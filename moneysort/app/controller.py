@@ -65,6 +65,7 @@ class ArmController:
                 self.recover(f"axis {','.join(stuck)} still busy after cancel ({why})")
             else:
                 log.info("pulse queue cleared by cancel; no restart needed")
+                self.last_error = None                       # fixed: don't keep showing it
                 self._recovering = False
         threading.Thread(target=check, daemon=True).start()
 
@@ -73,11 +74,14 @@ class ArmController:
         axes come back un-homed, which the dashboard already offers to fix."""
         log.error("RECOVERY: restarting armd (%s)", reason)
         self._recovering = True
-        self.estopped = True
-        try:
-            self.arm.disable()
-        except Exception:
-            log.exception("recover: disable failed")
+        # Motors stay ENABLED (no e-stop): the arm must hold its pose, not drop. The pulse
+        # trains die with the process; the new process claims the pins and enables again.
+        for n, m in self.arm.motors.items():
+            try:
+                if m.busy():
+                    m.cancel()
+            except Exception:
+                log.exception("recover: cancel %s failed", n)
         threading.Timer(0.6, os._exit, [70]).start()          # non-zero: systemd restarts us
 
     def _run(self, fn, what="move"):

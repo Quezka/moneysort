@@ -84,7 +84,15 @@ def tool_tip():
 def move_to(p):
     global lock
     before = tool_tip()
-    call("/move_to", {"x": p.x, "y": p.y, "z": p.z, "pps": PPS}, timeout=120)
+    for attempt in (0, 1):
+        try:
+            call("/move_to", {"x": p.x, "y": p.y, "z": p.z, "pps": PPS}, timeout=120)
+            break
+        except RuntimeError as e:
+            if "TX queue" not in str(e) or attempt:
+                raise
+            print("  coda impulsi bloccata: aspetto il recupero automatico e riprovo...")
+            time.sleep(5.0)                     # armd cancels the queue (or restarts) by itself
     time.sleep(SETTLE_S)
     if lock and jac_cache:                      # the image shifts as the camera moves: follow it
         after = tool_tip()

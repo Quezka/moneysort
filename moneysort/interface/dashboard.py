@@ -396,7 +396,7 @@ async function tick() {
   const txerr = le && /TX queue/.test(String(le[2]));
   document.getElementById("lasterr").innerHTML =
     (stuck ? `<span class="bad">&#9888; ${t("pulses still running on")} ${a.debug.tx_busy.join(", ").toUpperCase()} &mdash; ${t("press EMERGENCY DISABLE")}</span> ` : "") +
-    ((stuck || txerr) ? `<button id="recoverbtn" style="padding:6px 14px;font-size:14px">${t("Recover (restart)")}</button> ` : "") +
+    (stuck ? `<button id="recoverbtn" style="padding:6px 14px;font-size:14px">${t("Recover (restart)")}</button> ` : "") +
     (le ? `<span class="warn">&#9888; ${le[0]} &middot; ${le[1]}: ${String(le[2]).replace(/</g, "&lt;")}</span>` : "");
 
   const en = d.motors_enabled, estop = document.getElementById("estop"), reen = document.getElementById("reenable");

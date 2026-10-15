@@ -90,6 +90,9 @@ class Stepper:
                         raise
             if time.monotonic() - t0 > timeout:
                 if timeout > 0:
+                    log.error("tx stuck on GPIO%d: tx_room=%s tx_busy=%s", self.step_pin,
+                              lgpio.tx_room(self.h, self.step_pin, TX_PWM),
+                              lgpio.tx_busy(self.h, self.step_pin, TX_PWM))   # raw values: a negative = lgpio error code
                     self.cancel()                        # free the axis; the caller still gets the error
                 raise RuntimeError(f"TX queue stuck on GPIO{self.step_pin}: a pulse train is "
                                    "not finishing (e-stop, then restart moneysort-arm if it persists)")
@@ -168,7 +171,11 @@ class Stepper:
         return True
 
     def busy(self):
-        return lgpio.tx_busy(self.h, self.step_pin, TX_PWM)
+        v = lgpio.tx_busy(self.h, self.step_pin, TX_PWM)
+        if v < 0:                                  # an lgpio error code is not "busy" (it is truthy!)
+            log.error("tx_busy on GPIO%d returned error %s", self.step_pin, v)
+            return False
+        return bool(v)
 
     # --- public API -------------------------------------------------------
     def move(self, steps, max_pps=None):

@@ -56,7 +56,7 @@ class TestRecovery(unittest.TestCase):
         c.note_error("move_to", "TX queues stuck: no room for 5.0s (y)")
         self._sleep(1.2)
         self.assertEqual(self.exits, [70])
-        self.assertEqual(c.arm.disabled, 1)
+        self.assertEqual(c.arm.disabled, 0)          # motors stay enabled: the arm must hold its pose
 
     def test_queue_freed_by_cancel_needs_no_restart(self):
         c = make(after=False)
