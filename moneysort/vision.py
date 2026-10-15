@@ -28,7 +28,7 @@ def _find_circles(img, p):
         if c is None:
             continue
         for x, y, r in c[0]:
-            if all((x - fx) ** 2 + (y - fy) ** 2 > (0.7 * min(r, fr)) ** 2 for fx, fy, fr in found):
+            if all((x - fx) ** 2 + (y - fy) ** 2 > (0.4 * min(r, fr)) ** 2 for fx, fy, fr in found):
                 found.append((x, y, r))
     return np.array([found], dtype=np.float32) if found else None
 
