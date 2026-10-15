@@ -86,7 +86,7 @@ def try_move(dx, dy, scales=(1.0,)):
     return False
 
 
-ROOM_MM = 25.0     # free travel wanted in every X/Y direction around the working pose
+ROOM_MM = 50.0     # free travel wanted in every X/Y direction around the working pose
 
 
 def has_room(p, room=ROOM_MM):
