@@ -185,7 +185,7 @@ def make_handler(ctrl, camera):
                 self._send(json.dumps({"error": camera.error or "no camera"}), code=503)
                 return
             annotate = "detect" in self.path               # /camera?detect=1 -> coins drawn
-            period = 0.2 if annotate else 1 / 15.0         # detection is heavier -> ~5fps
+            period = 0.4 if annotate else 1 / 15.0         # detection is heavy (a core of CPU at 5 fps) -> ~2.5 fps
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.send_header("Cache-Control", "no-cache")

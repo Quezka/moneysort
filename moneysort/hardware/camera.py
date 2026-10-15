@@ -55,6 +55,9 @@ class Camera:
         self._pipe = None
         self._align = None
         self._run = True
+        self._stab_lock = threading.Lock()
+        self._stab_thumb = None              # tiny grey copy of the last detected frame
+        self._stab_hist = []                 # coins detected in the last 2 calls (static scene)
         if not _LIBS:
             self._run = False
             self.error = f"camera libs missing ({_IMPORT_ERR})"
@@ -192,7 +195,36 @@ class Camera:
             img, depth_at,
             lambda x, y, d: rs.rs2_deproject_pixel_to_point(intr, [x, y], d),
             **params)
+        coins = self._hold_missed(coins, img, annotated, params.get("square", True))
         return coins, self._encode(annotated)
+
+    def _hold_missed(self, coins, img, annotated, square):
+        """Stop coins from flickering: Hough misses a coin in ~1 frame of 6 on a pile.
+
+        While the scene is static (a tiny thumbnail of the frame barely changes between calls), a
+        coin that was seen in either of the previous two calls and is missing now is kept
+        (drawn orange, `held: True`). If the camera moved or the scene changed, nothing is held.
+        """
+        thumb = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), (80, 60), interpolation=cv2.INTER_AREA)
+        with self._stab_lock:
+            prev = self._stab_thumb
+            static = prev is not None and float(np.mean(cv2.absdiff(thumb, prev))) < 2.5
+            hist = self._stab_hist if static else []
+            seen = [c for c in coins]                      # what was really detected this time
+            H, W = img.shape[:2]
+            ox = (W - min(H, W)) // 2 if (square and W != H) else 0
+            oy = (H - min(H, W)) // 2 if (square and W != H) else 0
+            held = []
+            for old in (c for frame in hist for c in frame):
+                if any((old["px"] - c["px"]) ** 2 + (old["py"] - c["py"]) ** 2 < (0.5 * min(old["r"], c["r"])) ** 2
+                       for c in seen + held):
+                    continue
+                keep = dict(old, held=True)
+                held.append(keep)
+                cv2.circle(annotated, (old["px"] - ox, old["py"] - oy), old["r"], (0, 165, 255), 2)
+            self._stab_thumb = thumb
+            self._stab_hist = (hist + [seen])[-2:]
+        return coins + held
 
     def close(self):
         self._run = False
