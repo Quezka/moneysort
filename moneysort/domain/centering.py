@@ -68,6 +68,25 @@ def centered(err, tol_px):
     return math.hypot(*err) <= tol_px
 
 
+def predict_px(jac, px, moved_mm):
+    """Where a coin that was at `px` should appear after the tool moved `moved_mm` (dx, dy):
+    tool +d shifts the coin by J d (J is the learned image Jacobian)."""
+    return (px[0] + jac[0][0] * moved_mm[0] + jac[0][1] * moved_mm[1],
+            px[1] + jac[1][0] * moved_mm[0] + jac[1][1] * moved_mm[1])
+
+
+def track(coins, expected, gate_px):
+    """The coin nearest to where we expect ours, or None if none is within `gate_px`.
+
+    In a pile a plain "nearest to where it was" can jump to a neighbour once the camera
+    has moved; predicting with the Jacobian first, and gating, keeps us on the same coin.
+    """
+    c = nearest(coins, expected)
+    if c is None or math.hypot(c["px"] - expected[0], c["py"] - expected[1]) > gate_px:
+        return None
+    return c
+
+
 def nearest(coins, point):
     """The coin whose pixel centre is closest to `point`, or None."""
     if not coins:

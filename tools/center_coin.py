@@ -35,11 +35,15 @@ from moneysort.domain import centering, kinematics
 from moneysort.domain.kinematics import JointAngles, Point
 
 ARMD = f"http://localhost:{PORT}"
-PPS = 6000              # gentle: same ballpark as the jog
-PROBE_MM = 12.0         # size of the two probe moves
+PPS = 12000             # small moves never reach this: it only lifts the ramp ceiling
+PROBE_MM = 12.0         # size of the two probe moves (done once, then the Jacobian is reused)
 TOL_PX = 10             # "centred" when the coin is within this many pixels of the target
-MAX_ITERS = 15
-SETTLE_S = 0.7          # wait after a move so the camera frame is fresh and still
+MAX_ITERS = 12
+SETTLE_S = 0.35         # wait after a move so the camera frame is fresh and still
+GAIN = 0.9              # fraction of the pixel error corrected per step
+MAX_STEP_MM = 35.0      # biggest single correction
+TRACK_GATE_PX = 50      # a coin further than this from where we predicted it isn't ours
+jac_cache = None        # image Jacobian learned on the first coin, reused after
 TARGET_OFFSET_PX = (0, 0)   # nozzle-vs-image-centre offset: set once the pump is mounted
 
 
@@ -79,7 +83,7 @@ def try_move(dx, dy, scales=(1.0,), z_floor=None):
 
     If that fails and z_floor is given, also try going lower, a little at a time down to
     z_floor: the arm reaches further out the lower it is (at the rest height the radial
-    band is only ~55 mm wide). Returns True if a move was made, False if nothing worked.
+    band is only ~55 mm wide). Returns the (dx, dy) really moved, or None if nothing worked.
     """
     p = tool_tip()
     drops = [0.0]
@@ -91,11 +95,12 @@ def try_move(dx, dy, scales=(1.0,), z_floor=None):
                 move_to(Point(p.x + dx * sc, p.y + dy * sc, p.z - drop))
                 if drop:
                     print(f"  (abbasso la punta di {drop:.0f} mm per arrivarci)")
-                return True
+                q = tool_tip()
+                return (q.x - p.x, q.y - p.y)
             except (RuntimeError, kinematics.OutOfReach) as e:
                 if not _unreachable(e):
                     raise
-    return False
+    return None
 
 
 DROPS_MM = (10.0, 20.0, 30.0, 40.0, 50.0)   # how far below the working pose the tool may sink
@@ -142,8 +147,37 @@ def pick(coin):
     """Hook for the suction pump (not fitted yet): lower, pump on, lift."""
 
 
-def centre_coin(prev=None):
-    """Move until the coin is at the image centre. Returns (ok, message)."""
+def learn_jacobian(coin):
+    """Two probe moves -> image Jacobian. Returns (jac, coin_now) or (None, message)."""
+    seen = [coin]
+    probes = []
+    for dx, dy in ((PROBE_MM, 0.0), (0.0, PROBE_MM)):
+        for sign in (1, -1):                  # try the other way if one is out of reach
+            moved = try_move(sign * dx, sign * dy)
+            if moved:
+                break
+        else:
+            return None, "fuori portata in ogni direzione: porta il braccio piu' al centro dell'area di lavoro"
+        coins, _ = detect()
+        c = centering.track(coins, (seen[-1]["px"], seen[-1]["py"]), 200)
+        if c is None:
+            return None, "ho perso la moneta durante la calibrazione dei movimenti"
+        probes.append((moved, (c["px"] - seen[-1]["px"], c["py"] - seen[-1]["py"])))
+        seen.append(c)
+    try:
+        return centering.solve_image_jacobian(probes), seen[-1]
+    except ValueError as e:
+        return None, f"calibrazione immagine non riuscita: {e}"
+
+
+def centre_coin(prev=None, relearned=False):
+    """Move until the coin is at the image centre. Returns (ok, message).
+
+    With several coins in view (a pile) it goes for the one nearest the target point, then
+    follows that same coin: each step predicts where it should land and only accepts a coin
+    close to that spot.
+    """
+    global jac_cache
     coins, frame = detect()
     if not frame:
         return False, "nessun frame dalla camera"
@@ -151,33 +185,18 @@ def centre_coin(prev=None):
     coin = centering.nearest(coins, prev or target)
     if coin is None:
         return False, "nessuna moneta in vista"
+    if len(coins) > 1:
+        print(f"  vedo {len(coins)} monete: prendo la piu' vicina al centro")
 
-    # --- probe the image Jacobian -------------------------------------------
-    start = tool_tip()
-    seen = [coin]
-    probes = []
-    for dx, dy in ((PROBE_MM, 0.0), (0.0, PROBE_MM)):
-        before = tool_tip()
-        for sign in (1, -1):                  # try the other way if one is out of reach
-            if try_move(sign * dx, sign * dy):
-                break
-        else:
-            return False, "fuori portata in ogni direzione: porta il braccio piu' al centro dell'area di lavoro"
-        after = tool_tip()
-        moved = (after.x - before.x, after.y - before.y)    # what the arm really did
-        coins, _ = detect()
-        c = centering.nearest(coins, (seen[-1]["px"], seen[-1]["py"]))
-        if c is None or math.hypot(c["px"] - seen[-1]["px"], c["py"] - seen[-1]["py"]) > 200:
-            return False, "ho perso la moneta durante la calibrazione dei movimenti"
-        probes.append((moved, (c["px"] - seen[-1]["px"], c["py"] - seen[-1]["py"])))
-        seen.append(c)
-    try:
-        jac = centering.solve_image_jacobian(probes)
-    except ValueError as e:
-        return False, f"calibrazione immagine non riuscita: {e}"
+    # --- the image Jacobian: learned once (two probe moves), then reused -----
+    if jac_cache is None:
+        jac, res = learn_jacobian(coin)
+        if jac is None:
+            return False, res
+        jac_cache, coin = jac, res
+    jac = jac_cache
 
     # --- close the loop -----------------------------------------------------
-    coin = seen[-1]
     best = None
     for i in range(MAX_ITERS):
         err = centering.error_px(coin, target)
@@ -186,13 +205,19 @@ def centre_coin(prev=None):
         if centering.centered(err, TOL_PX):
             return True, f"centrata (errore {dist:.0f} px)"
         if best is not None and dist > best * 1.5:
+            jac_cache = None                  # the learned Jacobian no longer fits: relearn
+            if not relearned:
+                print("  l'errore sale: ricalibro i movimenti e riprovo")
+                return centre_coin(prev, relearned=True)
             return False, "l'errore sta aumentando: mi fermo"
         best = dist if best is None else min(best, dist)
-        dx, dy = centering.step_mm(jac, err)
-        if not try_move(dx, dy, scales=(1.0, 0.5, 0.25), z_floor=floor_z):
+        dx, dy = centering.step_mm(jac, err, gain=GAIN, max_mm=MAX_STEP_MM)
+        moved = try_move(dx, dy, scales=(1.0, 0.5, 0.25), z_floor=floor_z)
+        if not moved:
             return False, "la moneta e' al limite dell'area raggiungibile: avvicinala al centro"
         coins, _ = detect()
-        nxt = centering.nearest(coins, (coin["px"], coin["py"]))
+        expected = centering.predict_px(jac, (coin["px"], coin["py"]), moved)
+        nxt = centering.track(coins, expected, TRACK_GATE_PX)
         if nxt is None:
             return False, "ho perso la moneta"
         coin = nxt

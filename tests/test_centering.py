@@ -76,6 +76,23 @@ class TestCentering(unittest.TestCase):
         self.assertEqual(c.nearest(coins, (320, 240)), coins[1])
         self.assertIsNone(c.nearest([], (0, 0)))
 
+class TestTracking(unittest.TestCase):
+    J = [[0.0, -3.0], [3.0, 0.0]]
+
+    def test_predict_follows_the_jacobian(self):
+        self.assertEqual(c.predict_px(self.J, (100, 100), (10, 0)), (100.0, 130.0))
+
+    def test_track_keeps_our_coin_in_a_pile(self):
+        ours, other = {"px": 100, "py": 130}, {"px": 90, "py": 120}   # other is nearer to the OLD spot
+        pred = c.predict_px(self.J, (100, 100), (10, 0))
+        self.assertIs(c.track([other, ours], pred, 40), ours)
+        self.assertIs(c.nearest([other, ours], (100, 100)), other)    # the naive choice would jump
+
+    def test_track_gives_up_when_nothing_is_near(self):
+        self.assertIsNone(c.track([{"px": 400, "py": 400}], (100, 100), 50))
+        self.assertIsNone(c.track([], (100, 100), 50))
+
+
 
 if __name__ == "__main__":
     unittest.main()
