@@ -403,6 +403,43 @@ def approach(coin, margin=APPROACH_MARGIN_MM):
     return z, start
 
 
+def trouble(e):
+    """True for failures armd recovers from by itself: a stuck pulse queue, or armd restarting."""
+    return isinstance(e, OSError) or "TX queue" in str(e)
+
+
+def wait_armd(timeout=120):
+    """Poll /status until armd answers (it may be restarting after a queue wedge). Returns the status."""
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        try:
+            st = call("/status", timeout=3)
+            if st.get("camera", {}).get("ok"):
+                return st
+        except Exception:
+            pass
+        print(".", end="", flush=True)
+        time.sleep(2.0)
+    raise RuntimeError("armd non torna disponibile")
+
+
+def recover_job(home):
+    """After a stuck queue / daemon restart: wait for armd, re-home if it lost its position, go back
+    to the working pose, so the interrupted centring can simply be run again."""
+    print("\n  Problema con il braccio (coda impulsi): aspetto il recupero di armd", end="", flush=True)
+    time.sleep(4.0)                                     # let its own cancel/restart finish first
+    st = wait_armd()
+    print()
+    if st.get("estopped"):
+        raise RuntimeError("e-stop attivo: riabilita i motori e rilancia")
+    if not {"x", "y"} <= set(st["arm"].get("homed", [])):
+        print("  armd si e' riavviato e ha perso la posizione: rifaccio l'homing da solo...")
+        call("/home", {}, timeout=300)
+    unlock()                                            # image position of the old lock is meaningless now
+    print("  torno alla posa di lavoro e rifaccio la centratura.")
+    move_to(home)
+
+
 def ask(prompt, choices):
     while True:
         a = input(prompt).strip().lower()
@@ -441,27 +478,41 @@ def main():
     print("Il braccio si muove solo in X/Y, a quota costante. Tieni la mano vicino all'e-stop.")
     input("Metti una moneta sotto la camera. Invio per iniziare... ")
 
+    tries = 0
     while True:
         print("\nCerco e centro la moneta...")
         try:
             ok, msg = centre_coin()
-        except (RuntimeError, kinematics.OutOfReach) as e:
+        except (RuntimeError, OSError, kinematics.OutOfReach) as e:
+            if trouble(e) and tries < 3:               # armd wedged/restarted: heal and run it again
+                tries += 1
+                recover_job(home)
+                continue
             ok, msg = False, f"errore: {e}"
+        tries = 0
         print(("OK: " if ok else "NO: ") + msg)
+        redo = False
 
         if ok:
             a = ask("Confermi? [s = si', r = riprova, n = un'altra moneta, q = esci] ", {"s", "r", "n", "q"})
             if a == "s":
                 coin = getattr(centre_coin, "last", None)
                 input("Scendo verso la moneta (mano all'e-stop). Invio... ")
-                reached = approach(coin)
-                if reached is not None:
-                    z_low, up_pose = reached
-                    pick(coin)
-                    input(f"Sono a Z{z_low:.0f} mm. Invio per risalire... ")
-                    move_to(up_pose)                      # back up to where we started the descent
-                input("Togli la moneta a mano, poi premi Invio per procedere... ")
-                unlock()
+                try:
+                    reached = approach(coin)
+                    if reached is not None:
+                        z_low, up_pose = reached
+                        pick(coin)
+                        input(f"Sono a Z{z_low:.0f} mm. Invio per risalire... ")
+                        move_to(up_pose)                  # back up to where we started the descent
+                except (RuntimeError, OSError) as e:
+                    if not trouble(e):
+                        raise
+                    recover_job(home)                     # position may be lost: centre again
+                    redo, a = True, "r"
+                if not redo:
+                    input("Togli la moneta a mano, poi premi Invio per procedere... ")
+                    unlock()
         else:
             a = ask("Riprovo? [r = riprova, n = un'altra moneta, q = esci] ", {"r", "n", "q"})
         if a == "n":
@@ -469,6 +520,8 @@ def main():
         if a == "q":
             unlock()
             break
+        if redo:
+            continue
         print("Torno alla posa di partenza...")
         try:
             move_to(home)
