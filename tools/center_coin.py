@@ -15,7 +15,8 @@ only, like a person lining something up by eye:
   4. ask you to confirm. Then you take the coin away by hand and say "ok": the arm
      goes back to where it started and looks for the next one.
 
-It only ever moves the tool in X/Y at its CURRENT height (move_to through armd, so
+It moves the tool in X/Y at a constant height, sinking at most 50 mm only when a step
+is out of reach (move_to through armd, so
 every limit and the e-stop still apply). Where the pump will go, `pick()` is the
 hook. Keep a hand near the e-stop.
 """
@@ -69,23 +70,37 @@ def move_to(p):
     time.sleep(SETTLE_S)
 
 
-def try_move(dx, dy, scales=(1.0,)):
+def _unreachable(e):
+    return "range" in str(e).lower() or "reach" in str(e).lower()
+
+
+def try_move(dx, dy, scales=(1.0,), z_floor=None):
     """Move the tool by (dx, dy) mm, shrinking the step if the target is out of reach.
 
-    Returns True if a move was made, False if even the smallest step is unreachable
-    (e.g. the home pose is the arm's maximum radial reach, so +X can't go further).
+    If that fails and z_floor is given, also try going lower, a little at a time down to
+    z_floor: the arm reaches further out the lower it is (at the rest height the radial
+    band is only ~55 mm wide). Returns True if a move was made, False if nothing worked.
     """
     p = tool_tip()
-    for sc in scales:
-        try:
-            move_to(Point(p.x + dx * sc, p.y + dy * sc, p.z))
-            return True
-        except (RuntimeError, kinematics.OutOfReach) as e:
-            if "range" not in str(e).lower() and "reach" not in str(e).lower():
-                raise
+    drops = [0.0]
+    if z_floor is not None:
+        drops += [d for d in DROPS_MM if p.z - d >= z_floor]
+    for drop in drops:
+        for sc in scales:
+            try:
+                move_to(Point(p.x + dx * sc, p.y + dy * sc, p.z - drop))
+                if drop:
+                    print(f"  (abbasso la punta di {drop:.0f} mm per arrivarci)")
+                return True
+            except (RuntimeError, kinematics.OutOfReach) as e:
+                if not _unreachable(e):
+                    raise
     return False
 
 
+DROPS_MM = (10.0, 20.0, 30.0, 40.0, 50.0)   # how far below the working pose the tool may sink
+MAX_DROP_MM = 50.0
+floor_z = None          # lowest Z allowed while centring; set from the working pose in main()
 ROOM_MM = 50.0     # free travel wanted in every X/Y direction around the working pose
 
 
@@ -174,7 +189,7 @@ def centre_coin(prev=None):
             return False, "l'errore sta aumentando: mi fermo"
         best = dist if best is None else min(best, dist)
         dx, dy = centering.step_mm(jac, err)
-        if not try_move(dx, dy, scales=(1.0, 0.5, 0.25)):
+        if not try_move(dx, dy, scales=(1.0, 0.5, 0.25), z_floor=floor_z):
             return False, "la moneta e' al limite dell'area raggiungibile: avvicinala al centro"
         coins, _ = detect()
         nxt = centering.nearest(coins, (coin["px"], coin["py"]))
@@ -215,6 +230,8 @@ def main():
         input("Spazio libero sotto la camera? Invio per spostare il braccio... ")
         move_to(ready)
         home = ready
+    global floor_z
+    floor_z = home.z - MAX_DROP_MM
     print(f"\nPosa di partenza: X{home.x:.0f} Y{home.y:.0f} Z{home.z:.0f} mm "
           "(ci torno tra una moneta e l'altra).")
     print("Il braccio si muove solo in X/Y, a quota costante. Tieni la mano vicino all'e-stop.")
