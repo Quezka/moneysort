@@ -59,6 +59,22 @@ def step_mm(jac, err_px, gain=0.7, max_mm=20.0):
     return dx, dy
 
 
+def servo_velocity(jac, err_px, kp=2.0, max_mm_s=60.0):
+    """Tool velocity (vx, vy) in mm/s, base frame, that pulls the coin toward the target.
+
+    Continuous version of step_mm: speed is proportional to the pixel error (kp [1/s] times
+    the mm that would close it), so the arm slows smoothly into the target instead of
+    stopping and starting; capped at max_mm_s.
+    """
+    inv = _inv2(jac)
+    vx = kp * (inv[0][0] * err_px[0] + inv[0][1] * err_px[1])
+    vy = kp * (inv[1][0] * err_px[0] + inv[1][1] * err_px[1])
+    n = math.hypot(vx, vy)
+    if n > max_mm_s:
+        vx, vy = vx * max_mm_s / n, vy * max_mm_s / n
+    return vx, vy
+
+
 def error_px(coin, target):
     """(target - coin) in pixels; coin is a dict with px, py."""
     return target[0] - coin["px"], target[1] - coin["py"]

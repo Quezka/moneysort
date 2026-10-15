@@ -44,6 +44,16 @@ GAIN = 0.9              # fraction of the pixel error corrected per step
 MAX_STEP_MM = 35.0      # biggest single correction
 TRACK_GATE_PX = 50      # a coin further than this from where we predicted it isn't ours
 jac_cache = None        # image Jacobian learned on the first coin, reused after
+SERVO = True            # centre with continuous jog velocity (smooth) instead of step moves
+KP = 2.0                # servo: mm/s of tool speed per mm of remaining error (1/s)
+MAX_SPEED_MM_S = 60.0
+LOOP_S = 0.08           # pause between servo updates (a detect call takes about as long again)
+STALL_S = 2.5           # no progress for this long -> sink the tool (more reach) or give up
+SINK_MM_S = 15.0
+SERVO_TIMEOUT_S = 30.0
+SERVO_GATE_PX = 80      # tracking gate while the arm is moving
+APPROACH_MARGIN_MM = 15.0   # stay this far above the coin surface when descending (nozzle offset)
+APPROACH_STEP_MM = 10.0
 TARGET_OFFSET_PX = (0, 0)   # nozzle-vs-image-centre offset: set once the pump is mounted
 
 
@@ -137,6 +147,18 @@ def ready_pose(p):
     return None
 
 
+def jog(vx, vy, vz=0.0, ttl=0.35):
+    """Hold-to-move velocity (base frame, mm/s). Zeros stop. armd stops by itself after ttl."""
+    call("/jog", {"cart": {"x": vx, "y": vy, "z": vz}, "ttl": ttl}, timeout=5)
+
+
+def stop_jog():
+    try:
+        call("/jog", {"cart": {"x": 0, "y": 0, "z": 0}}, timeout=5)
+    except Exception:
+        pass
+
+
 def detect():
     """-> (coins, (W, H)). Coins without depth are included (require_depth=False)."""
     r = call("/detect", {"require_depth": False})
@@ -170,6 +192,69 @@ def learn_jacobian(coin):
         return None, f"calibrazione immagine non riuscita: {e}"
 
 
+def servo_centre(coin, target, jac):
+    """Smooth centring: send a tool velocity proportional to the pixel error, keep updating it.
+
+    Returns (ok, message, coin_now). If the error stops shrinking (the arm is at the edge of its
+    reach) it sinks the tool, which reaches further, down to floor_z; then gives up.
+    """
+    t_start = last_t = best_t = time.monotonic()
+    v = (0.0, 0.0)
+    dist = math.hypot(*centering.error_px(coin, target))
+    best, inside, lost, sinking = dist, 0, 0, False
+    try:
+        while time.monotonic() - t_start < SERVO_TIMEOUT_S:
+            coins, _ = detect()
+            now = time.monotonic()
+            dt = now - last_t
+            expected = centering.predict_px(jac, (coin["px"], coin["py"]), (v[0] * dt, v[1] * dt))
+            nxt = centering.track(coins, expected, SERVO_GATE_PX)
+            last_t = now
+            if nxt is None:
+                lost += 1
+                v = (0.0, 0.0)
+                jog(0.0, 0.0)
+                if lost >= 4:
+                    return False, "ho perso la moneta", coin
+                time.sleep(LOOP_S)
+                continue
+            lost, coin = 0, nxt
+            err = centering.error_px(coin, target)
+            dist = math.hypot(*err)
+            print(f"  errore {dist:5.1f} px", end="\r", flush=True)
+            if centering.centered(err, TOL_PX):
+                inside += 1
+                if inside >= 2:
+                    break
+            else:
+                inside = 0
+            if dist < best * 0.9:
+                best, best_t, sinking = dist, now, False
+            vz = 0.0
+            if now - best_t > STALL_S:                  # stuck: nearly out of reach at this height
+                if tool_tip().z - 5.0 > floor_z:
+                    vz, sinking = -SINK_MM_S, True
+                else:
+                    return False, "la moneta e' al limite dell'area raggiungibile: avvicinala al centro", coin
+            v = centering.servo_velocity(jac, err, KP, MAX_SPEED_MM_S)
+            jog(v[0], v[1], vz)
+            time.sleep(LOOP_S)
+        else:
+            return False, "non riesco a centrarla in tempo", coin
+    finally:
+        stop_jog()
+    print()
+    time.sleep(SETTLE_S + 0.2)                           # let it stop, then check with a still frame
+    coins, _ = detect()
+    c = centering.track(coins, (coin["px"], coin["py"]), SERVO_GATE_PX)
+    if c is None:
+        return False, "ho perso la moneta", coin
+    d = math.hypot(*centering.error_px(c, target))
+    if d > TOL_PX * 1.5:
+        return False, f"si e' fermata a {d:.0f} px dal centro", c
+    return True, f"centrata (errore {d:.0f} px)", c
+
+
 def centre_coin(prev=None, relearned=False):
     """Move until the coin is at the image centre. Returns (ok, message).
 
@@ -197,7 +282,12 @@ def centre_coin(prev=None, relearned=False):
         jac_cache, coin = jac, res
     jac = jac_cache
 
-    # --- close the loop -----------------------------------------------------
+    if SERVO:
+        ok, msg, coin = servo_centre(coin, target, jac)
+        centre_coin.last = coin
+        return ok, msg
+
+    # --- close the loop (step moves; the old way) ---------------------------
     best = None
     for i in range(MAX_ITERS):
         err = centering.error_px(coin, target)
@@ -223,6 +313,33 @@ def centre_coin(prev=None, relearned=False):
             return False, "ho perso la moneta"
         coin = nxt
     return False, "non riesco a centrarla in tempo"
+
+
+def approach(coin, margin=APPROACH_MARGIN_MM):
+    """Sink the tool straight down toward the coin (x, y fixed). Returns the Z it reached.
+
+    Depth comes from the camera (valid down to ~0.2 m): the coin surface is about depth below
+    the tool, so the target is tip.z - depth + margin. Stops early where the arm can't go lower.
+    """
+    if not coin or not coin.get("depth_ok"):
+        print("  nessuna profondita' valida: non scendo (alza la camera oltre 20 cm e riprova).")
+        return None
+    start = tool_tip()
+    target_z = start.z - coin["depth_m"] * 1000.0 + margin
+    print(f"  moneta a {coin['depth_m'] * 100:.0f} cm sotto la camera: scendo da Z{start.z:.0f} "
+          f"verso Z{target_z:.0f} mm (margine {margin:.0f} mm).")
+    z = start.z
+    while z > target_z + 0.5:
+        nz = max(z - APPROACH_STEP_MM, target_z)
+        try:
+            move_to(Point(start.x, start.y, nz))
+        except (RuntimeError, kinematics.OutOfReach) as e:
+            if not _unreachable(e):
+                raise
+            print(f"  non posso scendere oltre Z{z:.0f} mm a questa distanza dalla base.")
+            break
+        z = nz
+    return z
 
 
 def ask(prompt, choices):
@@ -274,9 +391,12 @@ def main():
         if ok:
             a = ask("Confermi? [s = si', r = riprova, q = esci] ", {"s", "r", "q"})
             if a == "s":
-                coins, _ = detect()
-                if coins:
-                    pick(coins[0])
+                coin = getattr(centre_coin, "last", None)
+                input("Scendo verso la moneta (mano all'e-stop). Invio... ")
+                reached = approach(coin)
+                if reached is not None:
+                    pick(coin)
+                    input(f"Sono a Z{reached:.0f} mm. Invio per risalire... ")
                 input("Togli la moneta a mano, poi premi Invio per procedere... ")
         else:
             a = ask("Riprovo? [r = riprova, q = esci] ", {"r", "q"})
@@ -297,4 +417,5 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
+        stop_jog()
         print("\ninterrotto (il braccio resta dov'e').")

@@ -112,6 +112,30 @@ class TestPickTarget(unittest.TestCase):
         a, b = self.coin(320, 240, None), self.coin(500, 100, 0.31)
         self.assertIs(c.pick_target([a, b], (320, 240)), b)
 
+class TestServo(unittest.TestCase):
+    def test_velocity_is_proportional_and_capped(self):
+        j = [[3.0, 0.0], [0.0, 3.0]]                       # 3 px/mm
+        vx, vy = c.servo_velocity(j, (-30, 0), kp=2.0, max_mm_s=60)
+        self.assertAlmostEqual(vx, -20.0)                  # 10 mm away * 2/s, sign follows J^-1
+        self.assertEqual(vy, 0.0)
+        vx, vy = c.servo_velocity(j, (-3000, 0), kp=2.0, max_mm_s=60)
+        self.assertAlmostEqual(math.hypot(vx, vy), 60.0)
+
+    def test_servo_converges_in_simulation_without_stopping(self):
+        a = [[0.0, -3.0], [3.0, 0.0]]
+        cam = SimCamera(a, (230, -40), (180, 10))
+        j = [[-a[r][k] for k in range(2)] for r in range(2)]
+        dt, delay = 0.12, 2                                # 120 ms loop, 2 loops of latency
+        pending = [(0.0, 0.0)] * delay
+        for _ in range(300):
+            err = c.error_px(cam.coin_px(), cam.centre)
+            if c.centered(err, 6):
+                break
+            pending.append(c.servo_velocity(j, err, kp=2.0, max_mm_s=60))
+            vx, vy = pending.pop(0)
+            cam.move(vx * dt, vy * dt)
+        self.assertLess(math.hypot(*c.error_px(cam.coin_px(), cam.centre)), 8)
+
 
 
 if __name__ == "__main__":
