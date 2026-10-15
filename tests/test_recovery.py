@@ -11,8 +11,13 @@ from moneysort.app import controller as ctl   # noqa: E402
 
 
 class FakeMotor:
-    def __init__(self, busy_after_cancel):
+    def __init__(self, busy_after_cancel, room_after_cancel=8):
         self.is_busy, self.after, self.cancels = True, busy_after_cancel, 0
+        self.room_after = room_after_cancel
+        self._room = 0
+
+    def room(self):
+        return self._room
 
     def busy(self):
         return self.is_busy
@@ -20,6 +25,7 @@ class FakeMotor:
     def cancel(self):
         self.cancels += 1
         self.is_busy = self.after
+        self._room = self.room_after
         return True
 
 
@@ -32,9 +38,9 @@ class FakeArm:
         self.disabled += 1
 
 
-def make(after):
+def make(after, room_after=8):
     c = ctl.ArmController.__new__(ctl.ArmController)
-    c.arm = FakeArm({"x": FakeMotor(after)})
+    c.arm = FakeArm({"x": FakeMotor(after, room_after)})
     c.last_error, c.estopped = None, False
     return c
 
@@ -57,6 +63,12 @@ class TestRecovery(unittest.TestCase):
         self._sleep(1.2)
         self.assertEqual(self.exits, [70])
         self.assertEqual(c.arm.disabled, 0)          # motors stay enabled: the arm must hold its pose
+
+    def test_idle_but_no_room_after_cancel_still_restarts(self):
+        c = make(after=False, room_after=0)           # "not busy" yet nothing can be queued
+        c.note_error("move_to", "TX queues stuck: no room for 5.0s (x, y, z)")
+        self._sleep(1.2)
+        self.assertEqual(self.exits, [70])
 
     def test_queue_freed_by_cancel_needs_no_restart(self):
         c = make(after=False)

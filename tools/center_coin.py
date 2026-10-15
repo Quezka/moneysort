@@ -472,7 +472,12 @@ def main():
         print(f"\nDal riposo non c'e' margine per muoversi di lato: porto la punta a X{ready.x:.0f} "
               f"Z{ready.z:.0f} mm (da X{home.x:.0f} Z{home.z:.0f}).")
         input("Spazio libero sotto la camera? Invio per spostare il braccio... ")
-        move_to(ready)
+        try:
+            move_to(ready)
+        except (RuntimeError, OSError) as e:
+            if not trouble(e):
+                raise
+            recover_job(ready)                       # ends at the working pose
         home = ready
     global floor_z
     floor_z = home.z - MAX_DROP_MM
@@ -528,9 +533,12 @@ def main():
         print("Torno alla posa di partenza...")
         try:
             move_to(home)
-        except (RuntimeError, kinematics.OutOfReach) as e:
-            print(f"non riesco a tornare: {e}")
-            break
+        except (RuntimeError, OSError, kinematics.OutOfReach) as e:
+            if trouble(e):
+                recover_job(home)                    # heals armd, re-homes if needed, ends at home
+            else:
+                print(f"non riesco a tornare: {e}")
+                break
         if ok and a == "s":
             input("Metti la prossima moneta. Invio per continuare... ")
     print("fine.")

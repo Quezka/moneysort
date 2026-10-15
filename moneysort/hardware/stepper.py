@@ -105,13 +105,23 @@ class Stepper:
         even when the queue is full or wedged -- the last resort that frees an axis
         without restarting the daemon. Pending steps are lost, so position is unsure.
         """
+        before = self.tx_state()
         try:
             lgpio.tx_pulse(self.h, self.step_pin, 0, 0, 0, 0)
         except lgpio.error as e:
             log.error("cancel: GPIO%d: %s", self.step_pin, e)
             return False
-        log.warning("cancelled the pulse queue on GPIO%d", self.step_pin)
+        log.warning("cancelled the pulse queue on GPIO%d (before: %s, after: %s)",
+                    self.step_pin, before, self.tx_state())
         return True
+
+    def room(self):
+        """Free slots in the tx queue (<1 on an idle axis = the lgpio queue is wedged)."""
+        return lgpio.tx_room(self.h, self.step_pin, TX_PWM)
+
+    def tx_state(self):
+        """Raw tx_room/tx_busy for the log (a negative number is an lgpio error code)."""
+        return f"room={lgpio.tx_room(self.h, self.step_pin, TX_PWM)} busy={lgpio.tx_busy(self.h, self.step_pin, TX_PWM)}"
 
     def _burst(self, pps, cycles):
         """Queue one constant-rate burst of `cycles` pulses at `pps` (blocking)."""

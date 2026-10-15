@@ -60,7 +60,10 @@ class ArmController:
                 if m.busy():
                     m.cancel()
             time.sleep(1.0)
-            stuck = [n for n, m in self.arm.motors.items() if m.busy()]
+            # Wedged = still busy, OR idle but with no free slot: a cancel that left the queue
+            # at room 0 clears "busy" yet nothing can ever be queued again (all axes at once, seen
+            # in the field), so judging by busy alone called it fixed and the next move stuck too.
+            stuck = [n for n, m in self.arm.motors.items() if m.busy() or m.room() < 1]
             if stuck:
                 self.recover(f"axis {','.join(stuck)} still busy after cancel ({why})")
             else:
