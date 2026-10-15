@@ -141,11 +141,13 @@ def try_move(dx, dy, scales=(1.0,), z_floor=None):
     for drop in drops:
         for sc in scales:
             try:
-                move_to(Point(p.x + dx * sc, p.y + dy * sc, p.z - drop))
+                q = Point(p.x + dx * sc, p.y + dy * sc, p.z - drop)
+                kinematics.inverse(q)           # check here: armd would log every refusal as a dashboard warning
+                move_to(q)
                 if drop:
                     print(f"  (abbasso la punta di {drop:.0f} mm per arrivarci)")
-                q = tool_tip()
-                return (q.x - p.x, q.y - p.y)
+                now = tool_tip()
+                return (now.x - p.x, now.y - p.y)
             except (RuntimeError, kinematics.OutOfReach) as e:
                 if not _unreachable(e):
                     raise
