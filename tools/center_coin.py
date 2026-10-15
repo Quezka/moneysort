@@ -370,7 +370,7 @@ def centre_coin(prev=None, relearned=False):
 
 
 def approach(coin, margin=APPROACH_MARGIN_MM):
-    """Sink the tool straight down toward the coin (x, y fixed). Returns the Z it reached.
+    """Sink the tool straight down toward the coin (x, y fixed). Returns (Z reached, pose it started from).
 
     Depth comes from the camera (valid down to ~0.2 m): the coin surface is about depth below
     the tool, so the target is tip.z - depth + margin. Stops early where the arm can't go lower.
@@ -400,7 +400,7 @@ def approach(coin, margin=APPROACH_MARGIN_MM):
             print(f"  non posso scendere oltre Z{z:.0f} mm a questa distanza dalla base.")
             break
         z = nz
-    return z
+    return z, start
 
 
 def ask(prompt, choices):
@@ -456,8 +456,10 @@ def main():
                 input("Scendo verso la moneta (mano all'e-stop). Invio... ")
                 reached = approach(coin)
                 if reached is not None:
+                    z_low, up_pose = reached
                     pick(coin)
-                    input(f"Sono a Z{reached:.0f} mm. Invio per risalire... ")
+                    input(f"Sono a Z{z_low:.0f} mm. Invio per risalire... ")
+                    move_to(up_pose)                      # back up to where we started the descent
                 input("Togli la moneta a mano, poi premi Invio per procedere... ")
                 unlock()
         else:
