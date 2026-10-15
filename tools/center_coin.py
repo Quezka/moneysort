@@ -44,6 +44,8 @@ GAIN = 0.9              # fraction of the pixel error corrected per step
 MAX_STEP_MM = 35.0      # biggest single correction
 TRACK_GATE_PX = 50      # a coin further than this from where we predicted it isn't ours
 jac_cache = None        # image Jacobian learned on the first coin, reused after
+last_shift = None      # (dx, dy) measured by the camera for the last move (None = unusable)
+MIN_RESPONSE = 0.15     # phase-correlation confidence below this: ignore the measurement
 lock = None             # (px, py) of the coin we are committed to; we never switch to another
 LOCK_GATE_PX = 140      # how far from the remembered spot we still accept it as the same coin
 SERVO = False           # centre with continuous jog velocity (smooth) instead of step moves
@@ -80,9 +82,28 @@ def tool_tip():
     return kinematics.forward(JointAngles(x=j["x"], y=j["y"], z=j["z"]))
 
 
+def mark_ref():
+    try:
+        call("/ref", {}, timeout=3)
+    except Exception:
+        pass
+
+
+def measure_shift():
+    """Picture shift since mark_ref() as (dx, dy), or None if it can't be trusted."""
+    try:
+        r = call("/shift", {}, timeout=3)
+    except Exception:
+        return None
+    if not r.get("ok") or r.get("response", 0.0) < MIN_RESPONSE:
+        return None
+    return (r["dx"], r["dy"])
+
+
 def move_to(p):
-    global lock
+    global lock, last_shift
     before = tool_tip()
+    mark_ref()
     for attempt in (0, 1):
         try:
             call("/move_to", {"x": p.x, "y": p.y, "z": p.z, "pps": PPS}, timeout=120)
@@ -93,9 +114,13 @@ def move_to(p):
             print("  coda impulsi bloccata: aspetto il recupero automatico e riprovo...")
             time.sleep(5.0)                     # armd cancels the queue (or restarts) by itself
     time.sleep(SETTLE_S)
-    if lock and jac_cache:                      # the image shifts as the camera moves: follow it
-        after = tool_tip()
-        lock = centering.predict_px(jac_cache, lock, (after.x - before.x, after.y - before.y))
+    last_shift = measure_shift()
+    if lock:                                    # the image shifts as the camera moves: follow it
+        if last_shift:
+            lock = (lock[0] + last_shift[0], lock[1] + last_shift[1])
+        elif jac_cache:
+            after = tool_tip()
+            lock = centering.predict_px(jac_cache, lock, (after.x - before.x, after.y - before.y))
         set_target(lock)
 
 
@@ -221,10 +246,17 @@ def learn_jacobian(coin):
         else:
             return None, "fuori portata in ogni direzione: porta il braccio piu' al centro dell'area di lavoro"
         coins, _ = detect()
-        c = centering.track(coins, (seen[-1]["px"], seen[-1]["py"]), 200)
+        prev = seen[-1]
+        if last_shift:                          # whole-picture shift: no coin identity needed
+            expected = (prev["px"] + last_shift[0], prev["py"] + last_shift[1])
+            c = centering.track(coins, expected, 40)
+            shift = last_shift
+        else:                                   # no texture to correlate: follow the coin itself
+            c = centering.track(coins, (prev["px"], prev["py"]), 200)
+            shift = None if c is None else (c["px"] - prev["px"], c["py"] - prev["py"])
         if c is None:
             return None, "ho perso la moneta durante la calibrazione dei movimenti"
-        probes.append((moved, (c["px"] - seen[-1]["px"], c["py"] - seen[-1]["py"])))
+        probes.append((moved, shift))
         seen.append(c)
         lock_to(c)
     try:
@@ -359,7 +391,10 @@ def centre_coin(prev=None, relearned=False):
         if not moved:
             return False, "la moneta e' al limite dell'area raggiungibile: avvicinala al centro"
         coins, _ = detect()
-        expected = centering.predict_px(jac, (coin["px"], coin["py"]), moved)
+        if last_shift:
+            expected = (coin["px"] + last_shift[0], coin["py"] + last_shift[1])
+        else:
+            expected = centering.predict_px(jac, (coin["px"], coin["py"]), moved)
         nxt = centering.track(coins, expected, TRACK_GATE_PX)
         for _ in range(2):                      # a missed detection is often just one bad frame
             if nxt is not None:

@@ -55,6 +55,7 @@ class Camera:
         self._pipe = None
         self._align = None
         self._run = True
+        self._ref = None                     # reference frame for shift() (set by mark_ref)
         self._stab_lock = threading.Lock()
         self._stab_thumb = None              # tiny grey copy of the last detected frame
         self._stab_hist = []                 # coins detected in the last 2 calls (static scene)
@@ -171,6 +172,35 @@ class Camera:
         """(width, height) of the latest colour frame, or None."""
         with self._lock:
             return None if self._color is None else (int(self._color.shape[1]), int(self._color.shape[0]))
+
+    def _small_gray(self):
+        with self._lock:
+            if self._color is None:
+                return None
+            img = self._color
+        g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        return cv2.resize(g, (320, 240), interpolation=cv2.INTER_AREA).astype(np.float32)
+
+    def mark_ref(self):
+        """Remember the current frame as the reference for shift(). False if there is no frame."""
+        g = self._small_gray()
+        self._ref = g
+        return g is not None
+
+    def shift(self):
+        """How far the whole picture moved since mark_ref(): {dx, dy, response} in full-res pixels.
+
+        Phase correlation of the two frames: with the camera on the arm and a static table, every
+        object moves by the same amount when the arm moves, so this tells where a coin went
+        WITHOUT identifying it (in a pile, neighbouring coins look alike and tracking by nearest
+        circle jumps to the wrong one). response ~1 = reliable, near 0 = no usable texture.
+        """
+        cur, ref = self._small_gray(), self._ref
+        if cur is None or ref is None:
+            return None
+        win = cv2.createHanningWindow((320, 240), cv2.CV_32F)
+        (dx, dy), resp = cv2.phaseCorrelate(ref, cur, win)
+        return {"dx": float(dx) * 2.0, "dy": float(dy) * 2.0, "response": float(resp)}
 
     def detect(self, **params):
         """Detect coins on the latest frame -> (coins, annotated_jpeg)."""

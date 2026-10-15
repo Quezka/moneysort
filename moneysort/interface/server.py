@@ -203,7 +203,7 @@ def make_handler(ctrl, camera):
                 pass                                       # client closed the stream
 
         def do_POST(self):
-            if not self.path.startswith(("/jog", "/detect", "/target")):    # frequent calls stay quiet
+            if not self.path.startswith(("/jog", "/detect", "/target", "/ref", "/shift")):    # frequent calls stay quiet
                 log.info("POST %s %s", self.path, self._peek())
             try:
                 if self.path.startswith("/detect"):
@@ -213,6 +213,13 @@ def make_handler(ctrl, camera):
                                            "frame": camera.frame_size(),
                                            "calibrated": calib is not None,
                                            "at_survey": at_survey}))
+                    return
+                if self.path.startswith("/ref"):
+                    self._send(json.dumps({"ok": bool(camera.ok and camera.mark_ref())}))
+                    return
+                if self.path.startswith("/shift"):
+                    sh = camera.shift() if camera.ok else None
+                    self._send(json.dumps({"ok": sh is not None, **(sh or {})}))
                     return
                 if self.path.startswith("/target"):
                     b = self._body()
