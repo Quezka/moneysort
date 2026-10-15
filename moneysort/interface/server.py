@@ -114,6 +114,13 @@ def build_status(ctrl, camera):
 
 
 def make_handler(ctrl, camera):
+    target = {"px": None, "py": None, "t": 0.0}      # coin a script is locked on (drawn on the preview)
+
+    def highlight():
+        if target["px"] is None or time.monotonic() - target["t"] > 60:
+            return None                                # stale: the script stopped updating it
+        return (target["px"], target["py"])
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
@@ -159,7 +166,8 @@ def make_handler(ctrl, camera):
                 else:
                     self._send(jpg, "image/jpeg")
             elif self.path.startswith("/detected"):        # annotated frame (JPEG)
-                coins, jpg = camera.detect(require_depth=False) if camera.ok else ([], None)
+                coins, jpg = (camera.detect(require_depth=False, highlight=highlight())
+                              if camera.ok else ([], None))
                 if jpg is None:
                     self._send(json.dumps({"error": camera.error or "no frame"}), code=503)
                 else:
@@ -184,7 +192,7 @@ def make_handler(ctrl, camera):
             self.end_headers()
             try:
                 while True:
-                    jpg = camera.detect()[1] if annotate else camera.jpeg()
+                    jpg = camera.detect(highlight=highlight())[1] if annotate else camera.jpeg()
                     if jpg:
                         self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
                         self.wfile.write(f"Content-Length: {len(jpg)}\r\n\r\n".encode())
@@ -195,7 +203,7 @@ def make_handler(ctrl, camera):
                 pass                                       # client closed the stream
 
         def do_POST(self):
-            if not self.path.startswith(("/jog", "/detect")):       # 12 Hz heartbeats stay quiet
+            if not self.path.startswith(("/jog", "/detect", "/target")):    # frequent calls stay quiet
                 log.info("POST %s %s", self.path, self._peek())
             try:
                 if self.path.startswith("/detect"):
@@ -205,6 +213,14 @@ def make_handler(ctrl, camera):
                                            "frame": camera.frame_size(),
                                            "calibrated": calib is not None,
                                            "at_survey": at_survey}))
+                    return
+                if self.path.startswith("/target"):
+                    b = self._body()
+                    if b.get("clear") or b.get("px") is None:
+                        target.update(px=None, py=None)
+                    else:
+                        target.update(px=float(b["px"]), py=float(b["py"]), t=time.monotonic())
+                    self._send(json.dumps({"ok": True}))
                     return
                 if self.path.startswith("/disable"):
                     ctrl.disable()

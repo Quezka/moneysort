@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 DEFAULTS = dict(min_r=18, max_r=70, min_dist=40, param2=32, min_z=0.20, max_z=0.60,
-                require_depth=True)
+                require_depth=True, highlight=None)   # highlight=(px, py): mark the coin there
 
 
 def detect_coins(bgr, depth_at, deproject, *, square=True, **params):
@@ -60,4 +60,12 @@ def detect_coins(bgr, depth_at, deproject, *, square=True, **params):
             cv2.circle(out, (cx, cy), 2, (0, 0, 255), 3)
             cv2.putText(out, f"{d:.2f}m", (cx - r, cy - r - 4),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    hl = p["highlight"]
+    if hl and coins:                                    # the coin we are locked on: magenta ring
+        c = min(coins, key=lambda k: (k["px"] - hl[0]) ** 2 + (k["py"] - hl[1]) ** 2)
+        if (c["px"] - hl[0]) ** 2 + (c["py"] - hl[1]) ** 2 <= 60 ** 2:
+            cx, cy = c["px"] - ox, c["py"] - oy
+            cv2.circle(out, (cx, cy), c["r"] + 8, (255, 0, 255), 3)
+            cv2.putText(out, "TARGET", (cx - 30, cy + c["r"] + 26),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
     return coins, out

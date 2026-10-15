@@ -44,6 +44,8 @@ GAIN = 0.9              # fraction of the pixel error corrected per step
 MAX_STEP_MM = 35.0      # biggest single correction
 TRACK_GATE_PX = 50      # a coin further than this from where we predicted it isn't ours
 jac_cache = None        # image Jacobian learned on the first coin, reused after
+lock = None             # (px, py) of the coin we are committed to; we never switch to another
+LOCK_GATE_PX = 140      # how far from the remembered spot we still accept it as the same coin
 SERVO = False           # centre with continuous jog velocity (smooth) instead of step moves
 KP = 2.0                # servo: mm/s of tool speed per mm of remaining error (1/s)
 MAX_SPEED_MM_S = 60.0
@@ -80,8 +82,37 @@ def tool_tip():
 
 
 def move_to(p):
+    global lock
+    before = tool_tip()
     call("/move_to", {"x": p.x, "y": p.y, "z": p.z, "pps": PPS}, timeout=120)
     time.sleep(SETTLE_S)
+    if lock and jac_cache:                      # the image shifts as the camera moves: follow it
+        after = tool_tip()
+        lock = centering.predict_px(jac_cache, lock, (after.x - before.x, after.y - before.y))
+        set_target(lock)
+
+
+def set_target(xy):
+    """Tell armd which coin we are locked on, so the dashboard preview draws a magenta ring on it."""
+    try:
+        call("/target", {"px": xy[0], "py": xy[1]}, timeout=3)
+    except Exception:
+        pass
+
+
+def lock_to(coin):
+    global lock
+    lock = (coin["px"], coin["py"])
+    set_target(lock)
+
+
+def unlock():
+    global lock
+    lock = None
+    try:
+        call("/target", {"clear": True}, timeout=3)
+    except Exception:
+        pass
 
 
 def _unreachable(e):
@@ -186,6 +217,7 @@ def learn_jacobian(coin):
             return None, "ho perso la moneta durante la calibrazione dei movimenti"
         probes.append((moved, (c["px"] - seen[-1]["px"], c["py"] - seen[-1]["py"])))
         seen.append(c)
+        lock_to(c)
     try:
         return centering.solve_image_jacobian(probes), seen[-1]
     except ValueError as e:
@@ -219,6 +251,7 @@ def servo_centre(coin, target, jac):
                 time.sleep(LOOP_S)
                 continue
             lost, coin = 0, nxt
+            lock_to(coin)
             err = centering.error_px(coin, target)
             dist = math.hypot(*err)
             print(f"  errore {dist:5.1f} px", end="\r", flush=True)
@@ -267,12 +300,20 @@ def centre_coin(prev=None, relearned=False):
     if not frame:
         return False, "nessun frame dalla camera"
     target = (frame[0] / 2 + TARGET_OFFSET_PX[0], frame[1] / 2 + TARGET_OFFSET_PX[1])
-    coin = centering.nearest(coins, prev) if prev else centering.pick_target(coins, target)
-    if coin is None:
-        return False, "nessuna moneta in vista"
-    if len(coins) > 1:
-        d = f", a {coin['depth_m'] * 100:.0f} cm" if coin.get("depth_ok") else ""
-        print(f"  vedo {len(coins)} monete: prendo quella piu' vicina alla camera (in cima){d}")
+    if lock:                                    # already committed to a coin: only that one
+        coin = centering.track(coins, lock, LOCK_GATE_PX)
+        if coin is None:
+            return False, ("non trovo piu' la moneta scelta (non passo a un'altra): rimettila in vista, "
+                           "oppure 'n' per sceglierne un'altra")
+    else:
+        coin = centering.nearest(coins, prev) if prev else centering.pick_target(coins, target)
+        if coin is None:
+            return False, "nessuna moneta in vista"
+        if len(coins) > 1:
+            d = f", a {coin['depth_m'] * 100:.0f} cm" if coin.get("depth_ok") else ""
+            print(f"  vedo {len(coins)} monete: scelgo quella piu' vicina alla camera (in cima){d}")
+        print("  la bloccata (anello viola sulla preview): non vado su altre finche' non e' presa.")
+    lock_to(coin)
 
     # --- the image Jacobian: learned once (two probe moves), then reused -----
     if jac_cache is None:
@@ -294,6 +335,7 @@ def centre_coin(prev=None, relearned=False):
         dist = math.hypot(*err)
         print(f"  passo {i}: errore {dist:5.1f} px")
         if centering.centered(err, TOL_PX):
+            centre_coin.last = coin
             return True, f"centrata (errore {dist:.0f} px)"
         if best is not None and dist > best * 1.5:
             jac_cache = None                  # the learned Jacobian no longer fits: relearn
@@ -312,6 +354,8 @@ def centre_coin(prev=None, relearned=False):
         if nxt is None:
             return False, "ho perso la moneta"
         coin = nxt
+        lock_to(coin)
+    centre_coin.last = coin
     return False, "non riesco a centrarla in tempo"
 
 
@@ -321,6 +365,13 @@ def approach(coin, margin=APPROACH_MARGIN_MM):
     Depth comes from the camera (valid down to ~0.2 m): the coin surface is about depth below
     the tool, so the target is tip.z - depth + margin. Stops early where the arm can't go lower.
     """
+    try:                                        # a fresh reading of the locked coin (its depth)
+        coins, _ = detect()
+        fresh = centering.track(coins, lock or ((coin or {}).get("px", 0), (coin or {}).get("py", 0)), 60)
+        if fresh is not None:
+            coin = fresh
+    except RuntimeError:
+        pass
     if not coin or not coin.get("depth_ok"):
         print("  nessuna profondita' valida: non scendo (alza la camera oltre 20 cm e riprova).")
         return None
@@ -389,7 +440,7 @@ def main():
         print(("OK: " if ok else "NO: ") + msg)
 
         if ok:
-            a = ask("Confermi? [s = si', r = riprova, q = esci] ", {"s", "r", "q"})
+            a = ask("Confermi? [s = si', r = riprova, n = un'altra moneta, q = esci] ", {"s", "r", "n", "q"})
             if a == "s":
                 coin = getattr(centre_coin, "last", None)
                 input("Scendo verso la moneta (mano all'e-stop). Invio... ")
@@ -398,9 +449,13 @@ def main():
                     pick(coin)
                     input(f"Sono a Z{reached:.0f} mm. Invio per risalire... ")
                 input("Togli la moneta a mano, poi premi Invio per procedere... ")
+                unlock()
         else:
-            a = ask("Riprovo? [r = riprova, q = esci] ", {"r", "q"})
+            a = ask("Riprovo? [r = riprova, n = un'altra moneta, q = esci] ", {"r", "n", "q"})
+        if a == "n":
+            unlock()                                   # drop the locked coin: next round picks anew
         if a == "q":
+            unlock()
             break
         print("Torno alla posa di partenza...")
         try:
@@ -418,4 +473,5 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         stop_jog()
+        unlock()
         print("\ninterrotto (il braccio resta dov'e').")
