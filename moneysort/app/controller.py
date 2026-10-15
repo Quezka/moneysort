@@ -4,6 +4,7 @@ This is the application/use-case layer: it knows nothing about HTTP or the
 dashboard. The interface layer drives it; it drives the Arm.
 """
 import logging
+import os
 import threading
 import time
 
@@ -41,6 +42,43 @@ class ArmController:
         """Remember (and log) a rejected/failed request so /status can show why nothing moved."""
         self.last_error = (time.strftime("%H:%M:%S"), what, str(msg))
         log.warning("%s failed: %s", what, msg)
+        if "TX queue" in str(msg):
+            self._schedule_recovery(str(msg))
+
+    # --- recovery from a wedged lgpio pulse queue ---------------------------
+    # lgpio can leave an axis's queue "busy" for good (a spinning timing thread, nothing
+    # drains, even a cancel doesn't clear it). Nothing short of dropping the GPIO handle
+    # fixes that, so we end the process and systemd (Restart=on-failure) starts a fresh one.
+    def _schedule_recovery(self, why):
+        if getattr(self, "_recovering", False):
+            return
+        self._recovering = True
+
+        def check():
+            time.sleep(1.5)
+            for n, m in self.arm.motors.items():             # one more try at a gentle fix
+                if m.busy():
+                    m.cancel()
+            time.sleep(1.0)
+            stuck = [n for n, m in self.arm.motors.items() if m.busy()]
+            if stuck:
+                self.recover(f"axis {','.join(stuck)} still busy after cancel ({why})")
+            else:
+                log.info("pulse queue cleared by cancel; no restart needed")
+                self._recovering = False
+        threading.Thread(target=check, daemon=True).start()
+
+    def recover(self, reason="manual"):
+        """Restart the daemon (motors disabled first). The dashboard reconnects by itself;
+        axes come back un-homed, which the dashboard already offers to fix."""
+        log.error("RECOVERY: restarting armd (%s)", reason)
+        self._recovering = True
+        self.estopped = True
+        try:
+            self.arm.disable()
+        except Exception:
+            log.exception("recover: disable failed")
+        threading.Timer(0.6, os._exit, [70]).start()          # non-zero: systemd restarts us
 
     def _run(self, fn, what="move"):
         if self.estopped:

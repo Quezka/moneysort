@@ -21,6 +21,7 @@ over HTTP instead of by claiming GPIO directly:
     POST /home             -> home all: x/y seek switches, z returns to zero
     POST /disable          -> LATCHED e-stop (cut torque, refuse moves)
     POST /enable           -> clear e-stop, re-energize
+    POST /recover          -> restart armd (frees a wedged pulse queue); axes come back un-homed
     POST /reboot /poweroff -> system control
 
 Runs as a systemd service (see deploy/). Jog with arm_test.py, which is now an
@@ -209,6 +210,10 @@ def make_handler(ctrl, camera):
                     ctrl.disable()
                 elif self.path.startswith("/enable"):
                     ctrl.enable()
+                elif self.path.startswith("/recover"):
+                    ctrl.recover("requested from the dashboard")
+                    self._send(json.dumps({"ok": True, "restarting": True}))
+                    return
                 elif self.path.startswith("/zero"):
                     ctrl.zero()
                 elif self.path.startswith("/jog"):

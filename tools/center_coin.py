@@ -35,7 +35,7 @@ from moneysort.domain import centering, kinematics
 from moneysort.domain.kinematics import JointAngles, Point
 
 ARMD = f"http://localhost:{PORT}"
-PPS = 12000             # small moves never reach this: it only lifts the ramp ceiling
+PPS = 6000              # gentle; high rates load lgpio's software-timed pulses and have jammed its queue
 PROBE_MM = 12.0         # size of the two probe moves (done once, then the Jacobian is reused)
 TOL_PX = 10             # "centred" when the coin is within this many pixels of the target
 MAX_ITERS = 12

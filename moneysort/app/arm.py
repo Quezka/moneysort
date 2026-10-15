@@ -227,6 +227,8 @@ class Arm:
                         del pending[name]
             if not progressed:
                 if time.monotonic() - last_progress > ROOM_TIMEOUT_S:
+                    for n in pending:                       # free the wedged queues before failing
+                        self.motors[n].cancel()
                     raise RuntimeError("TX queues stuck: no room for %ss (%s)" % (
                         ROOM_TIMEOUT_S, ", ".join(sorted(pending))))
                 time.sleep(0.001)          # all queues full; let them drain

@@ -295,6 +295,7 @@ const IT = {
   "pulses still running on": "impulsi ancora attivi su", "press EMERGENCY DISABLE": "premi ARRESTO DI EMERGENZA",
   "The arm is not homed (its position is lost at every start). Home now? X and Y seek their switches; Z returns to zero.":
     "Il braccio non è azzerato (a ogni avvio perde la posizione). Eseguire l'homing ora? X e Y cercano i finecorsa; Z torna a zero.",
+  "Recover (restart)": "Recupera (riavvia)", "Restart the arm daemon? Axes will need homing again.": "Riavviare il demone del braccio? Gli assi vanno rifatti in homing.", "Restarting the daemon…": "Riavvio del demone…",
   "Robot Arm": "Braccio robotico", "Camera": "Fotocamera", "camera offline": "fotocamera offline",
   "camera feed": "immagine della fotocamera",
   "EMERGENCY DISABLE": "ARRESTO DI EMERGENZA", "Re-enable motors": "Riattiva i motori",
@@ -392,8 +393,10 @@ async function tick() {
 
   const le = a && a.debug && a.debug.last_error;
   const stuck = a && a.debug && !a.moving && a.debug.tx_busy && a.debug.tx_busy.length;
+  const txerr = le && /TX queue/.test(String(le[2]));
   document.getElementById("lasterr").innerHTML =
     (stuck ? `<span class="bad">&#9888; ${t("pulses still running on")} ${a.debug.tx_busy.join(", ").toUpperCase()} &mdash; ${t("press EMERGENCY DISABLE")}</span> ` : "") +
+    ((stuck || txerr) ? `<button id="recoverbtn" style="padding:6px 14px;font-size:14px">${t("Recover (restart)")}</button> ` : "") +
     (le ? `<span class="warn">&#9888; ${le[0]} &middot; ${le[1]}: ${String(le[2]).replace(/</g, "&lt;")}</span>` : "");
 
   const en = d.motors_enabled, estop = document.getElementById("estop"), reen = document.getElementById("reenable");
@@ -409,6 +412,13 @@ async function tick() {
   if (cam.ok) { coff.style.display = "none"; cimg.style.display = ""; }   // pollCam sets the image
   else { cimg.style.display = "none"; coff.style.display = ""; }
 }
+
+document.getElementById("lasterr").onclick = async (e) => {
+  if (!e.target || e.target.id !== "recoverbtn") return;
+  if (!await ask(t("Restart the arm daemon? Axes will need homing again."))) return;
+  toast(t("Restarting the daemon…"), "warn", 8000);
+  post("/recover");
+};
 
 async function post(path, body) {
   try {
