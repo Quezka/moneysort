@@ -55,7 +55,6 @@ SINK_MM_S = 15.0
 SERVO_TIMEOUT_S = 30.0
 SERVO_GATE_PX = 80      # tracking gate while the arm is moving
 APPROACH_MARGIN_MM = 15.0   # stay this far above the coin surface when descending (nozzle offset)
-APPROACH_STEP_MM = 10.0
 TARGET_OFFSET_PX = (0, 0)   # nozzle-vs-image-centre offset: set once the pump is mounted
 
 
@@ -389,17 +388,21 @@ def approach(coin, margin=APPROACH_MARGIN_MM):
     target_z = start.z - coin["depth_m"] * 1000.0 + margin
     print(f"  moneta a {coin['depth_m'] * 100:.0f} cm sotto la camera: scendo da Z{start.z:.0f} "
           f"verso Z{target_z:.0f} mm (margine {margin:.0f} mm).")
-    z = start.z
-    while z > target_z + 0.5:
-        nz = max(z - APPROACH_STEP_MM, target_z)
+    # Lowest Z actually reachable at this x, y (checked on the kinematics, no trial moves),
+    # then ONE coordinated move: nothing to re-check on the way down, so it runs smoothly.
+    z = target_z
+    while z < start.z:
         try:
-            move_to(Point(start.x, start.y, nz))
-        except (RuntimeError, kinematics.OutOfReach) as e:
-            if not _unreachable(e):
-                raise
-            print(f"  non posso scendere oltre Z{z:.0f} mm a questa distanza dalla base.")
+            kinematics.inverse(Point(start.x, start.y, z))
             break
-        z = nz
+        except kinematics.OutOfReach:
+            z += 1.0
+    if z >= start.z - 1.0:
+        print("  non posso scendere a questa distanza dalla base: avvicina la moneta.")
+        return start.z, start
+    if z > target_z + 1.0:
+        print(f"  piu' in basso di Z{z:.0f} mm non arrivo a questa distanza dalla base.")
+    move_to(Point(start.x, start.y, z))
     return z, start
 
 
