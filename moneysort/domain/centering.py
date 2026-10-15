@@ -87,6 +87,23 @@ def track(coins, expected, gate_px):
     return c
 
 
+DEPTH_BAND_M = 0.006    # depths within this of the closest count as "the same level" (noise ~ 2-5 mm)
+
+
+def pick_target(coins, point, band_m=DEPTH_BAND_M):
+    """Which coin of a pile to go for: the one closest to the camera, i.e. the top one.
+
+    The depth sensor wobbles by a few mm, and a coin is only ~2 mm thick, so coins whose depth is
+    within `band_m` of the closest are treated as level and the one nearest `point` (the image
+    target) wins among them. Coins without a depth reading are used only if none has one.
+    """
+    with_depth = [c for c in coins if c.get("depth_ok") and c.get("depth_m")]
+    if not with_depth:
+        return nearest(coins, point)
+    top = min(c["depth_m"] for c in with_depth)
+    return nearest([c for c in with_depth if c["depth_m"] <= top + band_m], point)
+
+
 def nearest(coins, point):
     """The coin whose pixel centre is closest to `point`, or None."""
     if not coins:

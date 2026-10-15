@@ -182,11 +182,12 @@ def centre_coin(prev=None, relearned=False):
     if not frame:
         return False, "nessun frame dalla camera"
     target = (frame[0] / 2 + TARGET_OFFSET_PX[0], frame[1] / 2 + TARGET_OFFSET_PX[1])
-    coin = centering.nearest(coins, prev or target)
+    coin = centering.nearest(coins, prev) if prev else centering.pick_target(coins, target)
     if coin is None:
         return False, "nessuna moneta in vista"
     if len(coins) > 1:
-        print(f"  vedo {len(coins)} monete: prendo la piu' vicina al centro")
+        d = f", a {coin['depth_m'] * 100:.0f} cm" if coin.get("depth_ok") else ""
+        print(f"  vedo {len(coins)} monete: prendo quella piu' vicina alla camera (in cima){d}")
 
     # --- the image Jacobian: learned once (two probe moves), then reused -----
     if jac_cache is None:

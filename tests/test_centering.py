@@ -92,6 +92,26 @@ class TestTracking(unittest.TestCase):
         self.assertIsNone(c.track([{"px": 400, "py": 400}], (100, 100), 50))
         self.assertIsNone(c.track([], (100, 100), 50))
 
+class TestPickTarget(unittest.TestCase):
+    def coin(self, px, py, d):
+        return {"px": px, "py": py, "depth_ok": d is not None, "depth_m": d or 0.0}
+
+    def test_closest_to_the_camera_wins_even_if_far_from_the_centre(self):
+        top, low = self.coin(500, 100, 0.300), self.coin(320, 240, 0.320)
+        self.assertIs(c.pick_target([low, top], (320, 240)), top)
+
+    def test_within_the_noise_band_the_nearest_to_the_centre_wins(self):
+        a, b = self.coin(500, 100, 0.300), self.coin(330, 250, 0.303)
+        self.assertIs(c.pick_target([a, b], (320, 240)), b)
+
+    def test_no_depth_anywhere_falls_back_to_the_centre(self):
+        a, b = self.coin(500, 100, None), self.coin(330, 250, None)
+        self.assertIs(c.pick_target([a, b], (320, 240)), b)
+
+    def test_coins_with_depth_beat_those_without(self):
+        a, b = self.coin(320, 240, None), self.coin(500, 100, 0.31)
+        self.assertIs(c.pick_target([a, b], (320, 240)), b)
+
 
 
 if __name__ == "__main__":
