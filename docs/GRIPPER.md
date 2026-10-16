@@ -49,6 +49,9 @@ than stays held on a dead arm).
 - Choosing a **24 V** pump and valve lets them share the stepper PSU (no converter).
   A 12 V part needs a 24 -> 12 V buck.
 
+The cycle that will call the pump (`pick()` / `release()` hooks, drop spot, calibration) is in
+[`PICKING.md`](PICKING.md).
+
 ## Open items
 
 - Pick a concrete pump + valve + cup (5-8 mm, soft lip or bellows) available in Italy.

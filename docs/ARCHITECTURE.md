@@ -258,6 +258,22 @@ Plan every axis, set all DIR pins, then loop: for each still-pending axis, try t
 enqueue its next burst if its queue has room; sleep when all queues are full.
 All axes accelerate and run concurrently; positions update once every train ends.
 
+### Pulse queue hygiene (lgpio)
+`lgpio` can leave its software pulse queue wedged (every axis `room=0 busy=1`, nothing drains; seen on
+tiny moves and fast jogging). Mitigations, all in code: bursts under 8 cycles are merged
+(`domain/planning.merge_short`); every `tx_*` call and the home-switch read goes through one lock
+(`hardware/stepper.TX_LOCK`) because status polls used to race the move thread; every wait is bounded and a
+timeout hard-cancels the queue (`Stepper.cancel`, `tx_pulse(0,0)`); and `ArmController` restarts the daemon
+(`recover()`, `os._exit(70)`, systemd `Restart=on-failure`) when a cancel does not hold. Motors are never
+disabled by this. Details and symptoms: [`PICKING.md`](PICKING.md#when-the-pulse-queue-wedges-tx-queues-stuck).
+
+### Following a coin without identifying it
+The camera is on the arm, so a move shifts the whole picture. `Camera.mark_ref()` / `shift()` (`POST /ref`,
+`/shift`) phase-correlate two frames and return that shift, which `tools/center_coin.py` uses to learn the image
+Jacobian and to predict where its locked coin went, instead of "nearest circle" (which jumps between the similar
+coins of a pile). `Camera.detect` also holds a coin that flickers out of one detection for two calls while the
+scene is static.
+
 ### Homing (`find_home`) + soft limits
 Two-stage: a fast `home_seek` to first contact, back off until released plus
 clearance, then a slow `jog` approach until the switch reads **stably** triggered
@@ -303,6 +319,6 @@ too (`tests/test_kinematics.py`).
   camera frame and `tools/calibrate_camera.py` solves the camera→base transform
   (`camera_calib.json`, valid for its survey pose). Remaining: use it to turn a
   detection into a `move_to` target.
-- **Visual servoing** — a setpoint-tracking controller is the eventual model,
-  deferred.
-- **Sorting logic** — pick a detected coin, move to it, sort by kind.
+- **Visual servoing** — done as step moves in `tools/center_coin.py` (continuous servo via `/jog` exists behind
+  `SERVO = True` but the 6 fps USB2 camera is too slow for it). See [`PICKING.md`](PICKING.md).
+- **Sorting logic** — the pick cycle exists (`PICKING.md`); what remains is the pump (`pick()`/`release()`), then sorting by kind.

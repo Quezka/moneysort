@@ -93,6 +93,15 @@ Endpoint reference:
 | POST   | `/disable`    | —                                               | latched e-stop + abort |
 | POST   | `/enable`     | —                                               | clear e-stop |
 | POST   | `/reboot` / `/poweroff` | —                                     | system control |
+| POST   | `/move_to`    | `{x,y,z,pps?}`                                   | tool tip to a point (mm, base frame; needs x & y homed) |
+| POST   | `/jog`        | `{rates:{axis:deg/s}}` or `{cart:{x,y,z}, frame?, ttl?}` | hold-to-move velocity; stops by itself after `ttl` (dead-man) |
+| POST   | `/detect`     | `{require_depth?}`                               | coins in view (+ frame size, `base_mm` when calibrated) |
+| POST   | `/ref`, `/shift` | —                                             | picture shift since the marked frame (used by `center_coin.py`) |
+| POST   | `/target`     | `{px,py}` or `{clear:true}`                      | draw the TARGET ring on the dashboard preview |
+| POST   | `/recover`    | —                                                | restart the daemon (frees a wedged pulse queue; axes come back un-homed) |
+| GET    | `/camera`, `/detected`, `/snapshot` | —                          | MJPEG feed (`?detect=1` draws coins), annotated frame, plain frame |
+
+The pick cycle, calibration and its settings are in [`PICKING.md`](PICKING.md).
 
 ---
 

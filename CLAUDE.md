@@ -137,5 +137,7 @@ detected coin → base frame → `move_to`).
 - `docs/ARCHITECTURE.md` — the layered design, every module, runtime model, and
   the key mechanisms (motion planning, e-stop, homing, soft limits).
 - `docs/PINOUT.md` — full wiring, calibration, home switches.
+- `docs/PICKING.md` — the pick cycle (`tools/center_coin.py`): detection, lock-on, centring, descent, drop spot,
+  calibration, settings, recovery from a wedged lgpio queue.
 - `docs/GRIPPER.md` — suction-cup research for picking coins (pump + release valve; not built yet).
 - `docs/USAGE.md` — commanding the arm from a terminal (`arm_test.py` + curl API).
