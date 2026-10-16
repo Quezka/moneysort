@@ -44,9 +44,15 @@ PPS = 6000              # gentle; high rates load lgpio's software-timed pulses 
 PROBE_MM = 12.0         # size of the two probe moves (done once, then the Jacobian is reused)
 TOL_PX = 10             # "centred" when the coin is within this many pixels of the target
 MAX_ITERS = 12
-SETTLE_S = 0.35         # wait after a move so the camera frame is fresh and still
-GAIN = 0.9              # fraction of the pixel error corrected per step
-MAX_STEP_MM = 35.0      # biggest single correction
+SETTLE_S = 0.25         # wait after a move so the camera frame is fresh and still
+GAIN = 1.0              # fraction of the pixel error corrected per step (the Jacobian is measured, not guessed)
+MAX_STEP_MM = 60.0      # biggest single correction
+FINISH_PX = 30          # this close: stop centring, fold the last correction into the descent itself
+FAST_FINISH = True
+PUMP_FITTED = False     # True: after a coin it carries on by itself; False: asks first (you remove the coin)
+SETTINGS = os.path.join(ROOT, "center_settings.json")      # where to drop the coins (git-ignored)
+DROP_OFFSET_MM = (0.0, -150.0)   # default drop spot: this far from the working pose (base frame; -Y = to the right)
+drop = None             # Point: where a picked coin is released
 TRACK_GATE_PX = 50      # a coin further than this from where we predicted it isn't ours
 jac_cache = None        # image Jacobian learned on the first coin, reused after
 last_shift = None      # (dx, dy) measured by the camera for the last move (None = unusable)
@@ -347,6 +353,7 @@ def centre_coin(prev=None, relearned=False):
     close to that spot.
     """
     global jac_cache
+    centre_coin.finish = (0.0, 0.0)             # correction still to apply, folded into the descent
     coins, frame = detect()
     if not frame:
         return False, "nessun frame dalla camera"
@@ -369,7 +376,8 @@ def centre_coin(prev=None, relearned=False):
     lock_to(coin)
 
     # --- calibrated first move: the camera->base transform says where the tool must go ----
-    if camcal and coin.get("depth_ok") and coin.get("cam_mm"):
+    if camcal and coin.get("depth_ok") and coin.get("cam_mm") and camcal.at_survey(
+            call("/status")["arm"]["joints"], tol_deg=3.0):          # valid only at the survey pose
         b = camcal.to_base(coin["cam_mm"])
         tip = tool_tip()
         moved = try_move(b[0] - tip.x, b[1] - tip.y, scales=(1.0, 0.5))
@@ -406,6 +414,10 @@ def centre_coin(prev=None, relearned=False):
         if centering.centered(err, TOL_PX):
             centre_coin.last = coin
             return True, f"centrata (errore {dist:.0f} px)"
+        if FAST_FINISH and dist <= FINISH_PX:    # close enough: don't stop, correct while descending
+            centre_coin.finish = centering.step_mm(jac, err, gain=1.0, max_mm=FINISH_PX)
+            centre_coin.last = coin
+            return True, f"quasi al centro ({dist:.0f} px): correggo durante la discesa"
         if best is not None and dist > best * 1.5:
             jac_cache = None                  # the learned Jacobian no longer fits: relearn
             if not relearned:
@@ -444,7 +456,7 @@ def centre_coin(prev=None, relearned=False):
     return False, "non riesco a centrarla in tempo"
 
 
-def approach(coin, margin=None):
+def approach(coin, margin=None, dxy=(0.0, 0.0)):
     """Sink the tool straight down toward the coin (x, y fixed). Returns (Z reached, pose it started from).
 
     Depth comes from the camera (valid down to ~0.2 m): the coin surface is about depth below
@@ -464,6 +476,7 @@ def approach(coin, margin=None):
         margin = nozzle["margin"] + 3.0 if nozzle else APPROACH_MARGIN_MM
     approach.margin_used = margin
     start = tool_tip()
+    over = Point(start.x + dxy[0], start.y + dxy[1], start.z)       # the spot right above the coin
     target_z = start.z - coin["depth_m"] * 1000.0 + margin
     print(f"  moneta a {coin['depth_m'] * 100:.0f} cm sotto la camera: scendo da Z{start.z:.0f} "
           f"verso Z{target_z:.0f} mm (margine {margin:.0f} mm).")
@@ -472,17 +485,17 @@ def approach(coin, margin=None):
     z = target_z
     while z < start.z:
         try:
-            kinematics.inverse(Point(start.x, start.y, z))
+            kinematics.inverse(Point(over.x, over.y, z))
             break
         except kinematics.OutOfReach:
             z += 1.0
     if z >= start.z - 1.0:
         print("  non posso scendere a questa distanza dalla base: avvicina la moneta.")
-        return start.z, start
+        return start.z, over
     if z > target_z + 1.0:
         print(f"  piu' in basso di Z{z:.0f} mm non arrivo a questa distanza dalla base.")
-    move_to(Point(start.x, start.y, z))
-    return z, start
+    move_to(Point(over.x, over.y, z))           # x, y correction and descent in one smooth move
+    return z, over
 
 
 def _read_json(path):
@@ -620,6 +633,62 @@ def calibrate(home):
     print("Da ora center_coin.py li usa da solo e continua a migliorarli con le tue correzioni.")
 
 
+def release():
+    """Hook for the suction pump (not fitted yet): pump off + vent valve open, the coin drops."""
+
+
+def reachable_pose(p, max_drop=150.0):
+    """p itself, or p lowered (10 mm at a time) until the arm can reach it; None if it never can."""
+    z = p.z
+    while z >= p.z - max_drop:
+        q = Point(p.x, p.y, z)
+        try:
+            kinematics.inverse(q)
+            return q
+        except kinematics.OutOfReach:
+            z -= 10.0
+    return None
+
+
+def save_drop():
+    with open(SETTINGS, "w") as f:
+        json.dump({"drop": [drop.x, drop.y, drop.z]}, f, indent=2)
+
+
+def load_drop(home):
+    """Drop spot: --drop X Y Z (saved), else the saved one, else DROP_OFFSET_MM from the working pose."""
+    global drop
+    a = sys.argv
+    if "--drop" in a:
+        i = a.index("--drop")
+        try:
+            drop = Point(float(a[i + 1]), float(a[i + 2]), float(a[i + 3]))
+        except (IndexError, ValueError):
+            sys.exit("uso: --drop X Y Z   (mm, sistema di riferimento della base)")
+        want = drop
+        drop = reachable_pose(want)
+        if drop is None:
+            sys.exit(f"(X{want.x:.0f}, Y{want.y:.0f}, Z{want.z:.0f}) non e' raggiungibile")
+        save_drop()
+        return
+    d = (_read_json(SETTINGS) or {}).get("drop")
+    want = Point(*d) if d else Point(home.x + DROP_OFFSET_MM[0], home.y + DROP_OFFSET_MM[1], home.z)
+    drop = reachable_pose(want)
+    if drop is None:
+        sys.exit("non trovo un punto di scarico raggiungibile: usa --drop X Y Z")
+    if drop.z != want.z:
+        print(f"  scarico abbassato a Z{drop.z:.0f} mm per essere raggiungibile")
+
+
+def set_drop_here():
+    """d: the tool tip is where the coins should be dropped from now on."""
+    global drop
+    input("Porta la punta dove vuoi lasciare le monete (jog.py), poi Invio... ")
+    drop = tool_tip()
+    save_drop()
+    print(f"  scarico impostato a X{drop.x:.0f} Y{drop.y:.0f} Z{drop.z:.0f} mm (salvato).")
+
+
 def trouble(e):
     """True for failures armd recovers from by itself: a stuck pulse queue, or armd restarting."""
     return isinstance(e, OSError) or "TX queue" in str(e)
@@ -699,9 +768,12 @@ def main():
     if "--calibra" in sys.argv:
         calibrate(home)
         return
-    print(f"\nPosa di partenza: X{home.x:.0f} Y{home.y:.0f} Z{home.z:.0f} mm "
-          "(ci torno tra una moneta e l'altra).")
-    print("Per ogni moneta: la centra, scende, la prende e risale, tutto da solo. Tieni la mano vicino all'e-stop.")
+    load_drop(home)
+    auto = PUMP_FITTED or "--auto" in sys.argv
+    print(f"\nPosa di lavoro: X{home.x:.0f} Y{home.y:.0f} Z{home.z:.0f} mm. "
+          f"Scarico: X{drop.x:.0f} Y{drop.y:.0f} Z{drop.z:.0f} mm (cambialo con --drop X Y Z o col tasto d).")
+    print("Per ogni moneta: la centra, scende, la prende, risale, la porta allo scarico e torna dov'era, "
+          "tutto da solo. Tieni la mano vicino all'e-stop.")
     input("Metti una moneta sotto la camera. Invio per iniziare... ")
 
     tries = 0
@@ -724,7 +796,7 @@ def main():
             a = "s"                                        # the whole cycle runs by itself, no questions
             coin = getattr(centre_coin, "last", None)
             try:
-                reached = approach(coin)                   # down to the coin
+                reached = approach(coin, dxy=getattr(centre_coin, "finish", (0.0, 0.0)))   # down to the coin
                 if reached is not None:
                     z_low, up_pose = reached
                     last_cycle = {"home": home, "target": centre_coin.target_used,
@@ -732,8 +804,12 @@ def main():
                                   "down": Point(up_pose.x, up_pose.y, z_low)}
                     print(f"  giu' a Z{z_low:.0f} mm: prendo la moneta")
                     pick(coin)                             # <- the pump goes here
-                    print("  risalgo")
+                    print("  risalgo e la porto allo scarico")
                     move_to(up_pose)                       # back up to where the descent started
+                    move_to(drop)
+                    release()                              # <- pump off / valve here
+                    print("  scaricata; torno dove l'ho presa (le altre sono li' vicino)")
+                    move_to(up_pose)
                 unlock()
             except (RuntimeError, OSError) as e:
                 if not trouble(e):
@@ -741,6 +817,9 @@ def main():
                 recover_job(home)                          # position may be lost: centre again
                 redo, a = True, "r"
         else:
+            if auto and msg.startswith("nessuna moneta"):
+                print("Finito: non vedo piu' monete.")
+                break
             a = ask("Riprovo? [r = riprova, n = un'altra moneta, q = esci] ", {"r", "n", "q"})
         if a == "n":
             unlock()                                   # drop the locked coin: next round picks anew
@@ -749,22 +828,28 @@ def main():
             break
         if redo:
             continue
-        print("Torno alla posa di partenza...")
-        try:
-            move_to(home)
-        except (RuntimeError, OSError, kinematics.OutOfReach) as e:
-            if trouble(e):
-                recover_job(home)                    # heals armd, re-homes if needed, ends at home
-            else:
-                print(f"non riesco a tornare: {e}")
-                break
-        if ok and a == "s":
-            go = input("Moneta fatta. Invio = prossima moneta (togli prima questa se non c'e' ancora la pompa), "
-                       "m = la punta non era giusta (correggo la calibrazione), q = esci... ").strip().lower()
-            if go == "m":
-                learn_from_correction(last_cycle)
-                input("Invio per la prossima moneta... ")
-            elif go == "q":
+        if not (ok and a == "s"):                    # a failed attempt: back to the working pose
+            print("Torno alla posa di lavoro...")
+            try:
+                move_to(home)
+            except (RuntimeError, OSError, kinematics.OutOfReach) as e:
+                if trouble(e):
+                    recover_job(home)                # heals armd, re-homes if needed, ends at home
+                else:
+                    print(f"non riesco a tornare: {e}")
+                    break
+        elif not auto:                               # no pump yet: you take the coin away, then go on
+            while True:
+                go = input("Moneta fatta (resto qui sopra, dove l'ho presa). Invio = prossima (togli prima questa "
+                           "se non c'e' ancora la pompa), m = la punta non era giusta, d = imposta lo scarico "
+                           "qui, q = esci... ").strip().lower()
+                if go == "m":
+                    learn_from_correction(last_cycle)
+                elif go == "d":
+                    set_drop_here()
+                else:
+                    break
+            if go == "q":
                 break
     print("fine.")
 

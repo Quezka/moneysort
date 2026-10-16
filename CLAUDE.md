@@ -76,6 +76,9 @@ the documented CLI paths don't change).
   `center_coin.py` is the pick cycle (centre by pixels, descend, pick hook, rise); `--calibra` runs the camera→base
   calibration at its working pose and learns the nozzle pixel + touch height (`nozzle_calib.json`, git-ignored);
   answering `m` after a miss refines them online.
+  After each pick it carries the coin to a drop spot (`--drop X Y Z`, or `d` at the prompt; saved in
+  `center_settings.json`, git-ignored) and goes back to where it picked, so the rest of the pile is next; `--auto`
+  (or `PUMP_FITTED = True` once the pump exists) runs without asking until no coin is left.
 - **`deploy/`** — `deploy.sh`, `setup.sh`, `install_realsense.sh` (pyrealsense2 on
   the Pi: pip wheel or long librealsense source build), systemd unit, kiosk
   autostart (`kiosk.sh`, `cog` fullscreen on labwc).
