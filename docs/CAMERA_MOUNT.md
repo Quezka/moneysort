@@ -76,14 +76,60 @@ All of these are variables at the top of `cad/camera_mount.py`; change them and 
 
 ## Bill of materials
 
+### Screws and nuts (the shopping list)
+
+| Where | What | Qty |
+|-------|------|-----|
+| Block to the end plate (through the 4 plate holes, from the **top**) | **M3 x 8 mm** bolt (cap or button head; 10 mm at most) | 4 |
+| ... their nuts, in the hexagonal pockets under the block | **M3 hex nut** (5.5 mm across flats, 2.4 mm thick) | 4 |
+| Nozzle holder to the block (from the top, through the plate window) | **M3 x 12 mm** bolt | 2 |
+| ... their nuts, in the holder's flange | **M3 hex nut** | 2 |
+| Nozzle clamp (set screw across the holder tube) | **M3 x 8 mm grub screw** (headless, hex socket) | 1 |
+| ... its nut, in the pocket on the tube | **M3 hex nut** | 1 |
+| Camera to the wall (the camera's own tripod thread) | **1/4"-20 UNC x 3/8" (9.5 mm) socket-head cap screw** | 1 |
+| Cable | cable ties, 2.5 mm wide | 4 |
+
+Totals to buy: **M3 x 8 bolts: 4, M3 x 12 bolts: 2, M3 x 8 grub screw: 1, M3 nuts: 7, 1/4"-20 x 3/8" screw: 1** (buy a few
+spares of each). Hex keys: 2.5 mm (M3 cap screw; 2 mm for button heads), 1.5 mm (M3 grub screw), 3/16" (1/4" screw).
+Nylon-insert (nyloc) nuts do not fit the pockets: use plain M3 nuts, with a drop of thread-lock if they work loose.
+The 1/4" screw is sold as a "camera screw" / "tripod screw"; take the **socket-head** kind, a knurled thumbscrew does
+not fit in the recess.
+
+### Printed parts and other
+
 - 2 printed parts: `camera_mount.stl` (as modelled: underside on the bed, wall standing up, **no supports**) and `nozzle_holder.stl`
-  (flange on the bed, tube up). PETG or ABS (PLA creeps), 0.2 mm layers, 5 perimeters, 40% gyroid. Holes print ~0.2 mm
-  small: the 6.4 mm nozzle bore and the 6.7 mm tripod hole may need a drill (6.4 / 6.7 mm) to finish.
-- 4 x M3 x 8 bolts (10 at most; cap or button head, in from the **top** of the plate) + 4 x M3 nuts (in the pockets).
-- 2 x M3 x 12 bolts + 2 nuts for the nozzle holder (in from the top through the plate window).
-- 1 x **1/4-20 UNC socket-head screw, 3/8" (9.5 mm) under the head** (the camera's standard tripod thread; hex key 3/16"). It passes 3.5 mm of printed wall and grips the camera's thread for 6 mm. Check the thread depth of your camera first: screw the bolt into the bare camera by hand until it stops; the usable length is that depth minus 1 mm.
-- 1 x M3 x 8 set screw + 1 nut (nozzle clamp).
-- 4 cable ties. A short, good **USB 3 cable** (a bad one drops the D435 to USB2: 6 fps, noisy depth).
+  (flange on the bed, tube up). Holes print ~0.2 mm small: the 6.4 mm nozzle bore and the 6.7 mm tripod hole may need a
+  drill (6.4 / 6.7 mm) to finish.
+- A short, good **USB 3 cable** (a bad one drops the D435 to USB2: 6 fps, noisy depth).
+
+## First print: PLA to try, PETG for the real one
+
+Print the **first copy in PLA**: cheap, easy, and it tells you at once whether the measurements are right.
+Use it to check:
+
+- the 4 block holes line up with the plate holes, and the wall stands just in front of the plate edge;
+- the camera fits the pocket and the 1/4" screw bites its thread (see the screw note below);
+- the M3 nuts fit their pockets, and a hand and a hex key reach the screw head behind the wall;
+- the USB cable has room.
+
+Things to know about PLA:
+
+- It is fine for trying and for the first motion tests (21 g part, ~110 g total load).
+- It **softens above ~50-55 degC and creeps under constant load**: a warm room or sun can bend it slowly and the camera would
+  drift without you noticing. Once the fit is confirmed, print the final one in **PETG or ABS**.
+- It is stiffer but more brittle than PETG: do not over-tighten, especially the 1/4" screw (it usually cracks at that hole).
+  Use 5 perimeters, 40% infill, 0.2 mm layers.
+- **Do the final `center_coin.py --calibra` on the final part**, not on the PLA one: another material or a re-print can shift the camera
+  by a few tenths of a millimetre.
+
+If the test fit shows something wrong (a hole off by a millimetre, the cable in the way), change the variable at the top of
+`cad/camera_mount.py` and run it again before printing the final one.
+
+### The 1/4" screw length
+
+The wall under the camera is 3.5 mm thick, so a 3/8" (9.5 mm) screw grips the camera's thread for 6 mm. Check your camera first:
+screw the bolt into the bare camera by hand until it stops; the usable length is that depth minus 1 mm. If it stops sooner, use a shorter
+screw.
 
 ## Assembly
 
