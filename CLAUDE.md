@@ -139,5 +139,6 @@ detected coin → base frame → `move_to`).
 - `docs/PINOUT.md` — full wiring, calibration, home switches.
 - `docs/PICKING.md` — the pick cycle (`tools/center_coin.py`): detection, lock-on, centring, descent, drop spot,
   calibration, settings, recovery from a wedged lgpio queue.
+- `docs/CAMERA_MOUNT.md` — D435 mount for the front of the arm (parametric 3D model in `cad/camera_mount.py`, STL, notes).
 - `docs/GRIPPER.md` — suction-cup research for picking coins (pump + release valve; not built yet).
 - `docs/USAGE.md` — commanding the arm from a terminal (`arm_test.py` + curl API).

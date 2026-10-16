@@ -12,6 +12,7 @@ touch-friendly dashboard + JSON control API on port **8080**.
 - **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - layers, modules, mechanisms
 - **Wiring & calibration:** [`docs/PINOUT.md`](docs/PINOUT.md)
 - **Picking coins:** [`docs/PICKING.md`](docs/PICKING.md) - `tools/center_coin.py`: detect, lock on, centre, descend, drop, calibration, settings, recovery
+- **Camera mount:** [`docs/CAMERA_MOUNT.md`](docs/CAMERA_MOUNT.md) - printable D435 bracket for the front of the arm (`cad/`)
 - **Gripper research:** [`docs/GRIPPER.md`](docs/GRIPPER.md) - suction cup options for coins
 - **Commanding the arm:** [`docs/USAGE.md`](docs/USAGE.md) - `arm_test.py` + curl API
 - **Project context / conventions:** [`CLAUDE.md`](CLAUDE.md)
