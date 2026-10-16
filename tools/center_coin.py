@@ -532,7 +532,7 @@ def main():
     floor_z = home.z - MAX_DROP_MM
     print(f"\nPosa di partenza: X{home.x:.0f} Y{home.y:.0f} Z{home.z:.0f} mm "
           "(ci torno tra una moneta e l'altra).")
-    print("Il braccio si muove solo in X/Y, a quota costante. Tieni la mano vicino all'e-stop.")
+    print("Per ogni moneta: la centra, scende, la prende e risale, tutto da solo. Tieni la mano vicino all'e-stop.")
     input("Metti una moneta sotto la camera. Invio per iniziare... ")
 
     tries = 0
@@ -551,25 +551,22 @@ def main():
         redo = False
 
         if ok:
-            a = ask("Confermi? [s = si', r = riprova, n = un'altra moneta, q = esci] ", {"s", "r", "n", "q"})
-            if a == "s":
-                coin = getattr(centre_coin, "last", None)
-                input("Scendo verso la moneta (mano all'e-stop). Invio... ")
-                try:
-                    reached = approach(coin)
-                    if reached is not None:
-                        z_low, up_pose = reached
-                        pick(coin)
-                        input(f"Sono a Z{z_low:.0f} mm. Invio per risalire... ")
-                        move_to(up_pose)                  # back up to where we started the descent
-                except (RuntimeError, OSError) as e:
-                    if not trouble(e):
-                        raise
-                    recover_job(home)                     # position may be lost: centre again
-                    redo, a = True, "r"
-                if not redo:
-                    input("Togli la moneta a mano, poi premi Invio per procedere... ")
-                    unlock()
+            a = "s"                                        # the whole cycle runs by itself, no questions
+            coin = getattr(centre_coin, "last", None)
+            try:
+                reached = approach(coin)                   # down to the coin
+                if reached is not None:
+                    z_low, up_pose = reached
+                    print(f"  giu' a Z{z_low:.0f} mm: prendo la moneta")
+                    pick(coin)                             # <- the pump goes here
+                    print("  risalgo")
+                    move_to(up_pose)                       # back up to where the descent started
+                unlock()
+            except (RuntimeError, OSError) as e:
+                if not trouble(e):
+                    raise
+                recover_job(home)                          # position may be lost: centre again
+                redo, a = True, "r"
         else:
             a = ask("Riprovo? [r = riprova, n = un'altra moneta, q = esci] ", {"r", "n", "q"})
         if a == "n":
@@ -589,7 +586,10 @@ def main():
                 print(f"non riesco a tornare: {e}")
                 break
         if ok and a == "s":
-            input("Metti la prossima moneta. Invio per continuare... ")
+            go = input("Moneta fatta. Invio = prossima moneta (togli prima questa se non c'e' ancora "
+                       "la pompa), q = esci... ").strip().lower()
+            if go == "q":
+                break
     print("fine.")
 
 
