@@ -15,7 +15,7 @@ import lgpio
 
 from moneysort.config import ENABLE_PIN, GPIOCHIP, JOINTS, RETURN_ZERO_PPS
 from moneysort.domain import kinematics
-from moneysort.hardware.stepper import ROOM_TIMEOUT_S, Stepper
+from moneysort.hardware.stepper import ROOM_TIMEOUT_S, TX_LOCK, Stepper
 
 
 log = logging.getLogger("armd.arm")
@@ -251,7 +251,8 @@ class Arm:
         pin = self.home_pins.get(axis)
         if pin is None:
             return False
-        return lgpio.gpio_read(self.h, pin) == 1
+        with TX_LOCK:                      # same lgpio instance the pulse threads use
+            return lgpio.gpio_read(self.h, pin) == 1
 
     def _stable_home(self, axis, want, n=4, poll=0.003):
         """True once at_home(axis) equals `want` for `n` consecutive reads.

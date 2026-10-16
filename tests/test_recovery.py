@@ -83,6 +83,16 @@ class TestRecovery(unittest.TestCase):
         self._sleep(0.5)
         self.assertEqual(self.exits, [])
 
+    def test_second_wedge_soon_after_a_cancel_restarts_even_if_cancel_worked(self):
+        c = make(after=False)                         # cancel frees the queue every time...
+        c.note_error("move_to", "TX queues stuck: no room for 5.0s (x, y, z)")
+        self._sleep(0.5)                              # ...first time: just cancelled, no restart
+        self.assertEqual(self.exits, [])
+        c._recovering = False                         # (the check finished and cleared the flag)
+        c.note_error("move_to", "TX queues stuck: no room for 5.0s (x, y, z)")
+        self._sleep(1.4)                              # ...second one within 3 minutes: restart
+        self.assertEqual(self.exits, [70])
+
 
 if __name__ == "__main__":
     unittest.main()

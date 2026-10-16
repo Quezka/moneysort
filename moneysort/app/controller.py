@@ -53,8 +53,15 @@ class ArmController:
         if getattr(self, "_recovering", False):
             return
         self._recovering = True
+        now = time.monotonic()
+        again = now - getattr(self, "_last_wedge", -1e9) < 180.0    # a second wedge soon after a cancel
+        self._last_wedge = now
 
         def check():
+            if again:                                    # cancel only buys a few seconds: restart for real
+                time.sleep(1.0)
+                self.recover(f"queue wedged again within 3 min of a cancel ({why})")
+                return
             time.sleep(1.5)
             for n, m in self.arm.motors.items():             # one more try at a gentle fix
                 if m.busy():

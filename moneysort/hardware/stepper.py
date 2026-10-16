@@ -25,6 +25,12 @@ from moneysort.domain import planning
 TX_PWM = 0  # lgpio kind selector for tx_busy / tx_room
 log = logging.getLogger("armd.stepper")
 
+# lgpio's tx queue is shared mutable state in C. The move thread queues pulses while HTTP threads
+# poll tx_busy / tx_room for /status (dashboard every second, scripts at every move); concurrent
+# calls can corrupt it and leave every axis "busy, room 0" until the process restarts. So every
+# tx_* call (and the home-switch read) goes through this one lock. Calls are microseconds long.
+TX_LOCK = threading.RLock()
+
 # lgpio can't cancel a queued train, so nothing here may wait forever on one: every
 # wait is bounded, and a stuck queue becomes an error you can read, not a silent hang.
 ROOM_TIMEOUT_S = 5.0     # max wait for a free slot in the tx queue
@@ -81,11 +87,12 @@ class Stepper:
         while True:
             if honour_abort and self.abort.is_set():     # e-stop: stop feeding
                 return False
-            if lgpio.tx_room(self.h, self.step_pin, TX_PWM) >= 1:
+            with TX_LOCK:
                 try:
-                    lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
-                    return True
-                except lgpio.error as e:                 # room check raced / queue full
+                    if lgpio.tx_room(self.h, self.step_pin, TX_PWM) >= 1:
+                        lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
+                        return True
+                except lgpio.error as e:                 # queue full
                     if "full" not in str(e).lower():
                         raise
             if time.monotonic() - t0 > timeout:
@@ -105,23 +112,26 @@ class Stepper:
         even when the queue is full or wedged -- the last resort that frees an axis
         without restarting the daemon. Pending steps are lost, so position is unsure.
         """
-        before = self.tx_state()
-        try:
-            lgpio.tx_pulse(self.h, self.step_pin, 0, 0, 0, 0)
-        except lgpio.error as e:
-            log.error("cancel: GPIO%d: %s", self.step_pin, e)
-            return False
-        log.warning("cancelled the pulse queue on GPIO%d (before: %s, after: %s)",
-                    self.step_pin, before, self.tx_state())
+        with TX_LOCK:
+            before = self.tx_state()
+            try:
+                lgpio.tx_pulse(self.h, self.step_pin, 0, 0, 0, 0)
+            except lgpio.error as e:
+                log.error("cancel: GPIO%d: %s", self.step_pin, e)
+                return False
+            log.warning("cancelled the pulse queue on GPIO%d (before: %s, after: %s)",
+                        self.step_pin, before, self.tx_state())
         return True
 
     def room(self):
         """Free slots in the tx queue (<1 on an idle axis = the lgpio queue is wedged)."""
-        return lgpio.tx_room(self.h, self.step_pin, TX_PWM)
+        with TX_LOCK:
+            return lgpio.tx_room(self.h, self.step_pin, TX_PWM)
 
     def tx_state(self):
         """Raw tx_room/tx_busy for the log (a negative number is an lgpio error code)."""
-        return f"room={lgpio.tx_room(self.h, self.step_pin, TX_PWM)} busy={lgpio.tx_busy(self.h, self.step_pin, TX_PWM)}"
+        with TX_LOCK:
+            return f"room={lgpio.tx_room(self.h, self.step_pin, TX_PWM)} busy={lgpio.tx_busy(self.h, self.step_pin, TX_PWM)}"
 
     def _burst(self, pps, cycles):
         """Queue one constant-rate burst of `cycles` pulses at `pps` (blocking)."""
@@ -172,8 +182,9 @@ class Stepper:
         """Non-blocking: queue one burst if the tx queue has room, else False."""
         if cycles <= 0:
             return True
-        if lgpio.tx_room(self.h, self.step_pin, TX_PWM) < 1:
-            return False
+        with TX_LOCK:
+            if lgpio.tx_room(self.h, self.step_pin, TX_PWM) < 1:
+                return False
         try:
             self._tx(pps, cycles, timeout=0.0)
         except RuntimeError:
@@ -181,7 +192,8 @@ class Stepper:
         return True
 
     def busy(self):
-        v = lgpio.tx_busy(self.h, self.step_pin, TX_PWM)
+        with TX_LOCK:
+            v = lgpio.tx_busy(self.h, self.step_pin, TX_PWM)
         if v < 0:                                  # an lgpio error code is not "busy" (it is truthy!)
             log.error("tx_busy on GPIO%d returned error %s", self.step_pin, v)
             return False

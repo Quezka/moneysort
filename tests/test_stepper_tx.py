@@ -31,6 +31,13 @@ class FakeLgpio(types.ModuleType):
     def gpio_free(self, *a): pass
 
     def tx_room(self, h, pin, kind):
+        self._enter()
+        try:
+            return self._room()
+        finally:
+            self.inside -= 1
+
+    def _room(self):
         if time.monotonic() < self.full_until:
             return 0
         if self.full_for > 0:
@@ -58,7 +65,19 @@ class FakeLgpio(types.ModuleType):
             self.full_until = time.monotonic() + 0.05
 
     def tx_busy(self, h, pin, kind):
-        return self.infinite
+        self._enter()
+        try:
+            return self.infinite
+        finally:
+            self.inside -= 1
+
+    inside = 0
+    max_inside = 0
+
+    def _enter(self):
+        self.inside += 1
+        self.max_inside = max(self.max_inside, self.inside)
+        time.sleep(0.0005)                 # widen the window a racing thread could slip into
 
 
 fake = FakeLgpio()
@@ -144,6 +163,26 @@ class TestTx(unittest.TestCase):
             m.queue_slice(+5, 0.04)
         self.assertLess(time.monotonic() - t0, 3.0)
         self.assertFalse(fake.infinite)
+
+    def test_status_polling_never_overlaps_queuing(self):
+        """HTTP threads poll busy()/room() while the move thread queues: lgpio must see one call at a time."""
+        m = make()
+        fake.inside = fake.max_inside = 0
+        stop = threading.Event()
+
+        def poll():
+            while not stop.is_set():
+                m.busy()
+                m.room()
+        ts = [threading.Thread(target=poll) for _ in range(3)]
+        for t in ts:
+            t.start()
+        for _ in range(40):
+            m.try_queue(1000, 5)
+        stop.set()
+        for t in ts:
+            t.join()
+        self.assertEqual(fake.max_inside, 1)
 
 
 if __name__ == "__main__":
