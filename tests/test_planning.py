@@ -67,6 +67,23 @@ class TestRampSegs(unittest.TestCase):
         self.assertEqual(up, sorted(up))
         self.assertEqual(down, sorted(down, reverse=True))
 
+class TestMergeShort(unittest.TestCase):
+    def test_no_tiny_bursts_and_nothing_lost(self):
+        for steps in (1, 2, 3, 5, 9, 17, 40, 63, 100, 801, 5000):
+            segs = planning.plan_segments(steps, MAX_PPS, MIN_PPS, ACCEL)
+            self.assertEqual(sum(c for _, c in segs), steps)
+            if steps >= planning.MIN_BURST_CYCLES:
+                self.assertTrue(all(c >= planning.MIN_BURST_CYCLES for _, c in segs), (steps, segs))
+            else:
+                self.assertEqual(len(segs), 1)
+
+    def test_duration_is_preserved_when_merging(self):
+        raw = planning.ramp_segs(4, MAX_PPS, MIN_PPS, up=True) + [(MAX_PPS, 1)] + planning.ramp_segs(4, MAX_PPS, MIN_PPS, up=False)
+        merged = planning.merge_short(raw, MIN_PPS)
+        t = lambda segs: sum(c / p for p, c in segs)
+        self.assertAlmostEqual(t(raw), t(merged), places=9)
+
+
 
 if __name__ == "__main__":
     unittest.main()

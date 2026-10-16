@@ -34,6 +34,33 @@ def ramp_segs(ramp_steps, max_pps, min_pps, up, k=16):
     return segs
 
 
+# Bursts of one or two cycles last well under a millisecond, so the next tx_pulse is queued just as
+# the previous one ends -- right in lgpio's idle/wake-up window, where its queue has been seen to
+# wedge (every axis "busy, room 0", only a restart clears it; always on tiny moves). Merging tiny
+# neighbours into bursts of at least this many cycles keeps the queue feed away from that window.
+MIN_BURST_CYCLES = 8
+
+
+def merge_short(segs, min_pps, min_cycles=MIN_BURST_CYCLES):
+    """Merge adjacent bursts so none has fewer than ``min_cycles`` cycles (keeps total cycles and time)."""
+    out = []
+    cyc_acc, time_acc = 0, 0.0
+    for pps, cyc in segs:
+        cyc_acc += cyc
+        time_acc += cyc / pps
+        if cyc_acc >= min_cycles:
+            out.append([cyc_acc / time_acc, cyc_acc])
+            cyc_acc, time_acc = 0, 0.0
+    if cyc_acc:
+        if out:                                     # fold the remainder into the last burst
+            c = out[-1][1] + cyc_acc
+            t = out[-1][1] / out[-1][0] + time_acc
+            out[-1] = [c / t, c]
+        else:                                       # the whole move is tiny: one gentle burst
+            out.append([min(cyc_acc / time_acc, 2 * min_pps), cyc_acc])
+    return [(pps, cyc) for pps, cyc in out]
+
+
 def plan_segments(steps, max_pps, min_pps, accel_steps):
     """Trapezoid for ``abs(steps)`` pulses: ``[(pps, cycles), ...]``.
 
@@ -52,4 +79,4 @@ def plan_segments(steps, max_pps, min_pps, accel_steps):
         if rem:
             segs.append((max_pps, rem))
     segs += ramp_segs(ramp, max_pps, min_pps, up=False)
-    return segs
+    return merge_short(segs, min_pps)
