@@ -79,6 +79,8 @@ the documented CLI paths don't change).
   After each pick it carries the coin to a drop spot (`--drop X Y Z`, or `d` at the prompt; saved in
   `center_settings.json`, git-ignored) and goes back to where it picked, so the rest of the pile is next; `--auto`
   (or `PUMP_FITTED = True` once the pump exists) runs without asking until no coin is left.
+  `tools/center_settings.py` (menu, or `show` / `set KEY VALUE` / `drop X Y Z|here` / `reset`) edits its tunables
+  (`tools/center_params.py` lists them) in the same `center_settings.json`.
 - **`deploy/`** — `deploy.sh`, `setup.sh`, `install_realsense.sh` (pyrealsense2 on
   the Pi: pip wheel or long librealsense source build), systemd unit, kiosk
   autostart (`kiosk.sh`, `cog` fullscreen on labwc).

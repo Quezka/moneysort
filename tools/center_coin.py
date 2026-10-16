@@ -31,6 +31,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from moneysort.config import PORT
+import center_params as cp                       # tools/center_params.py: settings shared with center_settings.py
 from moneysort.domain import calibration as camcalib
 from moneysort.domain import centering, kinematics
 from moneysort.domain.kinematics import JointAngles, Point
@@ -651,8 +652,18 @@ def reachable_pose(p, max_drop=150.0):
 
 
 def save_drop():
-    with open(SETTINGS, "w") as f:
-        json.dump({"drop": [drop.x, drop.y, drop.z]}, f, indent=2)
+    data = cp.load()                              # keep the other settings
+    data["drop"] = [drop.x, drop.y, drop.z]
+    cp.save(data)
+
+
+def apply_settings():
+    """Override the module constants with the values saved by tools/center_settings.py."""
+    g = globals()
+    for key, val in cp.values().items():
+        if g.get(key) != val:
+            print(f"  impostazione {key} = {val} (da center_settings.json)")
+        g[key] = val
 
 
 def load_drop(home):
@@ -734,6 +745,7 @@ def ask(prompt, choices):
 
 
 def main():
+    apply_settings()
     try:
         st = call("/status")
     except Exception as e:
