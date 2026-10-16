@@ -39,11 +39,12 @@ millimetre or two, not better: see **Check before printing**.
   1/4-20 screw, turned so that its **lenses look straight down** (the plate is always level, so the camera
   always looks straight down). A shallow pocket (90.6 x 25.6 x 2 mm) stops it rotating. The camera ends up with
   its long axis across the arm and the lens face 4 mm below the plate.
-- **Nozzle holder**: a 6.4 mm bore with a 14 mm boss through the block, exactly under the plate window
-  (the window is the opening for the tube going up to the pump), with an M3 set screw to clamp the stem.
-  Adapt the bore when the suction cup is chosen ([`GRIPPER.md`](GRIPPER.md)).
+- **Nozzle holder** (a separate small part, `cad/nozzle_holder.stl`, printed flange-down): a 14 mm tube with a 6.4 mm
+  bore hanging under the block, exactly under the plate window (the window is the opening for the tube going up to the
+  pump), with an M3 set screw to clamp the stem. Two M3 bolts go in from the top through the window and the block, nuts in
+  the flange. Adapt the bore when the suction cup is chosen ([`GRIPPER.md`](GRIPPER.md)).
 - Four cable-tie slots (both wings, so the USB-C end can face either side) and lightening holes in the wings.
-- Printed part: 31 cm^3, about **22 g** with 40% infill (PETG). Total added load about 110 g (camera 72 g, bolts).
+- Printed parts: mount 30 cm^3 (about **21 g** with 40% infill, PETG) + holder 4 g. Total added load about 110 g (camera 72 g, bolts).
 
 ### Why the camera is *in front of* the nozzle
 
@@ -70,15 +71,17 @@ All of these are variables at the top of `cad/camera_mount.py`; change them and 
 | Plate front edge from the window centre (`PLATE_EDGE_X`) | 32 | decides where the wall stands: it must be *just in front* of the edge |
 | Plate width (`PLATE_HALF_W`) | 18 | the block is 34 wide; it must stay inside the plate |
 | Window (`WINDOW`) | 40.6 x 20.2 | the bore must stay under it |
-| D435 | 90 x 25 x 25, thread 1/4-20 | check the thread depth (about 6 mm) to choose the screw length |
+| D435 | 90 x 25 x 25, thread 1/4-20 | check the thread depth (about 6-7 mm): the screw is 3.5 mm of wall + 6 mm of thread |
 | Space above the plate behind the wall | | the screw head (12 mm) sits there, it needs a hand/driver |
 
 ## Bill of materials
 
-- 1 printed part (PETG or ABS, 5 perimeters, 40% gyroid; print it **lying on the wall's rear face**, the camera
-  load is shear along the layers; or upright with supports under the boss).
-- 4 x M3 x 8-10 bolts (cap or button head, in from the **top** of the plate) + 4 x M3 nuts (in the pockets).
-- 1 x 1/4-20 UNC bolt, **12-13 mm** long, + a washer (the camera holds the thread).
+- 2 printed parts: `camera_mount.stl` (as modelled: underside on the bed, wall standing up, **no supports**) and `nozzle_holder.stl`
+  (flange on the bed, tube up). PETG or ABS (PLA creeps), 0.2 mm layers, 5 perimeters, 40% gyroid. Holes print ~0.2 mm
+  small: the 6.4 mm nozzle bore and the 6.7 mm tripod hole may need a drill (6.4 / 6.7 mm) to finish.
+- 4 x M3 x 8 bolts (10 at most; cap or button head, in from the **top** of the plate) + 4 x M3 nuts (in the pockets).
+- 2 x M3 x 12 bolts + 2 nuts for the nozzle holder (in from the top through the plate window).
+- 1 x **1/4-20 UNC socket-head screw, 3/8" (9.5 mm) under the head** (the camera's standard tripod thread; hex key 3/16"). It passes 3.5 mm of printed wall and grips the camera's thread for 6 mm. Check the thread depth of your camera first: screw the bolt into the bare camera by hand until it stops; the usable length is that depth minus 1 mm.
 - 1 x M3 x 8 set screw + 1 nut (nozzle clamp).
 - 4 cable ties. A short, good **USB 3 cable** (a bad one drops the D435 to USB2: 6 fps, noisy depth).
 
@@ -86,7 +89,7 @@ All of these are variables at the top of `cad/camera_mount.py`; change them and 
 
 1. Slide the 4 nuts into the pockets on the underside of the block.
 2. Hold the block under the plate, wall in front of the edge, and put the 4 bolts through the plate from the top.
-3. Put the 1/4-20 bolt through the wall (head recess on the rear side) into the camera's bottom thread, lens down.
+3. Put the 1/4-20 screw through the wall (head recess on the rear side) into the camera's bottom thread, lens down. Tighten gently by hand: it is a plastic wall.
 4. Run the USB cable along the arm with the ties.
 5. **Redo the calibrations** (below).
 
