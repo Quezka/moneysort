@@ -73,6 +73,9 @@ the documented CLI paths don't change).
   the camera): `jog.py` (keyboard teleop, joint/cartesian), `coin_detect.py`,
   `calibrate_camera.py` (camera→base rigid transform at a survey pose →
   `camera_calib.json`), `realsense_test.py`.
+  `center_coin.py` is the pick cycle (centre by pixels, descend, pick hook, rise); `--calibra` runs the camera→base
+  calibration at its working pose and learns the nozzle pixel + touch height (`nozzle_calib.json`, git-ignored);
+  answering `m` after a miss refines them online.
 - **`deploy/`** — `deploy.sh`, `setup.sh`, `install_realsense.sh` (pyrealsense2 on
   the Pi: pip wheel or long librealsense source build), systemd unit, kiosk
   autostart (`kiosk.sh`, `cog` fullscreen on labwc).

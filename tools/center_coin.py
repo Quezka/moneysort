@@ -31,8 +31,13 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from moneysort.config import PORT
+from moneysort.domain import calibration as camcalib
 from moneysort.domain import centering, kinematics
 from moneysort.domain.kinematics import JointAngles, Point
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CAMERA_CALIB = os.path.join(ROOT, "camera_calib.json")     # camera -> base (tools/calibrate_camera.py)
+NOZZLE_CALIB = os.path.join(ROOT, "nozzle_calib.json")     # where the nozzle is in the image + touch height
 
 ARMD = f"http://localhost:{PORT}"
 PPS = 6000              # gentle; high rates load lgpio's software-timed pulses and have jammed its queue
@@ -57,7 +62,12 @@ SINK_MM_S = 15.0
 SERVO_TIMEOUT_S = 30.0
 SERVO_GATE_PX = 80      # tracking gate while the arm is moving
 APPROACH_MARGIN_MM = 15.0   # stay this far above the coin surface when descending (nozzle offset)
-TARGET_OFFSET_PX = (0, 0)   # nozzle-vs-image-centre offset: set once the pump is mounted
+TARGET_OFFSET_PX = (0, 0)   # nozzle-vs-image-centre offset (replaced by the learned nozzle_px)
+SURVEY_TOL_MM = 15.0        # a calibration is only trusted while the working pose is this close
+LEARN_RATE = 0.5            # how much one corrected cycle moves the learned nozzle pixel / margin
+nozzle = None               # {"px": [u, v], "margin": mm, "pose": [x, y, z], "n": updates} or None
+camcal = None               # CameraCalib valid at the working pose, or None
+last_cycle = None           # what the last descent did, so a correction can refine the calibration
 
 
 def call(path, body=None, timeout=60):
@@ -340,7 +350,9 @@ def centre_coin(prev=None, relearned=False):
     coins, frame = detect()
     if not frame:
         return False, "nessun frame dalla camera"
-    target = (frame[0] / 2 + TARGET_OFFSET_PX[0], frame[1] / 2 + TARGET_OFFSET_PX[1])
+    target = (tuple(nozzle["px"]) if nozzle
+              else (frame[0] / 2 + TARGET_OFFSET_PX[0], frame[1] / 2 + TARGET_OFFSET_PX[1]))
+    centre_coin.target_used = target
     if lock:                                    # already committed to a coin: only that one
         coin = centering.track(coins, lock, LOCK_GATE_PX)
         if coin is None:
@@ -355,6 +367,21 @@ def centre_coin(prev=None, relearned=False):
             print(f"  vedo {len(coins)} monete: scelgo quella piu' vicina alla camera (in cima){d}")
         print("  la bloccata (anello viola sulla preview): non vado su altre finche' non e' presa.")
     lock_to(coin)
+
+    # --- calibrated first move: the camera->base transform says where the tool must go ----
+    if camcal and coin.get("depth_ok") and coin.get("cam_mm"):
+        b = camcal.to_base(coin["cam_mm"])
+        tip = tool_tip()
+        moved = try_move(b[0] - tip.x, b[1] - tip.y, scales=(1.0, 0.5))
+        if moved:
+            print(f"  mossa calibrata verso la moneta ({moved[0]:+.0f},{moved[1]:+.0f} mm)")
+            coins, _ = detect()
+            expected = (coin["px"] + last_shift[0], coin["py"] + last_shift[1]) if last_shift else (coin["px"], coin["py"])
+            nxt = centering.track(coins, expected, LOCK_GATE_PX)
+            if nxt is None:
+                return False, "ho perso la moneta dopo la mossa calibrata"
+            coin = nxt
+            lock_to(coin)
 
     # --- the image Jacobian: learned once (two probe moves), then reused -----
     if jac_cache is None:
@@ -417,7 +444,7 @@ def centre_coin(prev=None, relearned=False):
     return False, "non riesco a centrarla in tempo"
 
 
-def approach(coin, margin=APPROACH_MARGIN_MM):
+def approach(coin, margin=None):
     """Sink the tool straight down toward the coin (x, y fixed). Returns (Z reached, pose it started from).
 
     Depth comes from the camera (valid down to ~0.2 m): the coin surface is about depth below
@@ -433,6 +460,9 @@ def approach(coin, margin=APPROACH_MARGIN_MM):
     if not coin or not coin.get("depth_ok"):
         print("  nessuna profondita' valida: non scendo (alza la camera oltre 20 cm e riprova).")
         return None
+    if margin is None:                          # learned touch height (+3 mm safety), else the default
+        margin = nozzle["margin"] + 3.0 if nozzle else APPROACH_MARGIN_MM
+    approach.margin_used = margin
     start = tool_tip()
     target_z = start.z - coin["depth_m"] * 1000.0 + margin
     print(f"  moneta a {coin['depth_m'] * 100:.0f} cm sotto la camera: scendo da Z{start.z:.0f} "
@@ -453,6 +483,141 @@ def approach(coin, margin=APPROACH_MARGIN_MM):
         print(f"  piu' in basso di Z{z:.0f} mm non arrivo a questa distanza dalla base.")
     move_to(Point(start.x, start.y, z))
     return z, start
+
+
+def _read_json(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def load_calibrations(home):
+    """Use the saved calibrations if they were made at (about) this working pose."""
+    global nozzle, camcal
+    d = _read_json(NOZZLE_CALIB)
+    if d and math.dist(d["pose"][:2], (home.x, home.y)) <= SURVEY_TOL_MM and abs(d["pose"][2] - home.z) <= 10:
+        nozzle = d
+        print(f"  calibrazione punta caricata (pixel {d['px'][0]:.0f},{d['px'][1]:.0f}; "
+              f"margine {d['margin']:.0f} mm; {d.get('n', 0)} aggiornamenti)")
+    elif d:
+        print("  calibrazione punta salvata per un'altra posa di lavoro: la ignoro (rifai --calibra).")
+    c = camcalib.load(CAMERA_CALIB)
+    j = call("/status")["arm"]["joints"]
+    if c and c.at_survey(j, tol_deg=3.0):
+        camcal = c
+        print(f"  calibrazione camera->base attiva (rms {c.rms_mm:.1f} mm): prima mossa diretta sulla moneta")
+    elif c:
+        print("  calibrazione camera->base fatta per un'altra posa: la ignoro (rifai --calibra).")
+
+
+def save_nozzle():
+    with open(NOZZLE_CALIB, "w") as f:
+        json.dump(nozzle, f, indent=2)
+
+
+def learn_from_correction(cycle):
+    """The user fixed the tool position by hand after a miss: refine the nozzle calibration.
+
+    The tool ended at D but the right spot is T2 (user-corrected). Centring had put the coin at
+    pixel P, so the pixel the coin SHOULD be at is P + J*(T2-D) (moving the tool by e shifts the
+    coin by J e); the descent margin shifts by how much lower/higher the user put the tip.
+    """
+    global nozzle
+    if jac_cache is None or cycle is None:
+        print("  niente da correggere (nessun ciclo recente o calibrazione immagine mancante).")
+        return
+    input("Porta la punta SOPRA/SULLA moneta nel punto giusto (tools/jog.py in un altro terminale), poi Invio... ")
+    t2 = tool_tip()
+    d = cycle["down"]
+    ex, ey = t2.x - d.x, t2.y - d.y
+    du, dv = (jac_cache[0][0] * ex + jac_cache[0][1] * ey, jac_cache[1][0] * ex + jac_cache[1][1] * ey)
+    new_px = [cycle["target"][0] + du, cycle["target"][1] + dv]
+    new_margin = cycle["margin"] - (d.z - t2.z)
+    if nozzle is None:
+        nozzle = {"px": new_px, "margin": new_margin, "n": 1}
+    else:
+        r = LEARN_RATE
+        nozzle["px"] = [nozzle["px"][0] * (1 - r) + new_px[0] * r, nozzle["px"][1] * (1 - r) + new_px[1] * r]
+        nozzle["margin"] = nozzle["margin"] * (1 - r) + new_margin * r
+        nozzle["n"] = nozzle.get("n", 0) + 1
+    nozzle["pose"] = [cycle["home"].x, cycle["home"].y, cycle["home"].z]
+    save_nozzle()
+    print(f"  imparato: la punta e' in immagine a ({nozzle['px'][0]:.0f},{nozzle['px'][1]:.0f}) px, "
+          f"margine di discesa {nozzle['margin']:.0f} mm (spostamento mm: {ex:+.0f},{ey:+.0f},{t2.z - d.z:+.0f}). "
+          "Salvato: vale dalla prossima moneta.")
+
+
+def calibrate(home):
+    """--calibra: camera->base transform at the working pose + where the nozzle is in the image.
+
+    For each of >= 4 coin spots: the script detects the coin from the working pose, you jog the
+    tool to TOUCH it (tools/jog.py in another terminal) and press Enter; the arm goes back to the
+    working pose. Solves base = R cam + t (same maths as tools/calibrate_camera.py) and, from the
+    same touches, the pixel where the nozzle sits plus the height at which it touches.
+    """
+    try:
+        import numpy as np
+        import calibrate_camera as cal
+    except ImportError as e:
+        sys.exit(f"serve numpy per la calibrazione ({e})")
+    global jac_cache, nozzle
+    print("\n=== calibrazione (camera->base + punta) alla posa di lavoro ===")
+    print("Per ogni punto: UNA moneta sotto la camera. La punta la porti tu a toccarla (jog.py).")
+    cam_pts, base_pts, pxs, dzs = [], [], [], []
+    while True:
+        a = input(f"[punto {len(cam_pts) + 1}] metti UNA moneta e premi Invio ({'f = finisci, ' if len(cam_pts) >= 4 else ''}q = annulla)... ").strip().lower()
+        if a == "q":
+            return
+        if a == "f" and len(cam_pts) >= 4:
+            break
+        move_to(home)
+        coins, _ = detect()
+        coins = [c for c in coins if c.get("depth_ok") and c.get("cam_mm")]
+        if len(coins) != 1:
+            print(f"  vedo {len(coins)} monete con profondita': ne serve esattamente UNA a 20-60 cm. Riprova.")
+            continue
+        coin = coins[0]
+        if jac_cache is None:
+            jac, res = learn_jacobian(coin)
+            if jac is None:
+                print("  " + res)
+                continue
+            jac_cache = jac
+            move_to(home)
+            coins, _ = detect()
+            coins = [c for c in coins if c.get("depth_ok") and c.get("cam_mm")]
+            if len(coins) != 1:
+                continue
+            coin = coins[0]
+        print(f"  moneta a ({coin['px']:.0f},{coin['py']:.0f}) px, {coin['depth_m'] * 100:.0f} cm sotto la camera.")
+        input("  Porta la punta a TOCCARE la moneta (jog.py), poi Invio... ")
+        t = tool_tip()
+        tp = np.array([t.x, t.y, t.z], float)
+        delta = (t.x - home.x, t.y - home.y)
+        px = (coin["px"] + jac_cache[0][0] * delta[0] + jac_cache[0][1] * delta[1],
+              coin["py"] + jac_cache[1][0] * delta[0] + jac_cache[1][1] * delta[1])
+        cam_pts.append(np.array(coin["cam_mm"], float))
+        base_pts.append(tp)
+        pxs.append(px)
+        dzs.append(t.z - (home.z - coin["depth_m"] * 1000.0))
+        print(f"  registrato ({len(cam_pts)}): punta a ({t.x:.0f},{t.y:.0f},{t.z:.0f}) mm, "
+              f"pixel punta {px[0]:.0f},{px[1]:.0f}, quota di contatto {dzs[-1]:+.0f} mm sopra la moneta")
+    R, tr = cal.rigid_transform(cam_pts, base_pts)
+    resid = [float(np.linalg.norm(base_pts[i] - (R @ cam_pts[i] + tr))) for i in range(len(cam_pts))]
+    rms = float(np.sqrt(np.mean(np.square(resid))))
+    j = call("/status")["arm"]["joints"]
+    with open(CAMERA_CALIB, "w") as f:
+        json.dump({"R": R.tolist(), "t": tr.tolist(), "survey_pose": {k: j[k] for k in ("x", "y", "z")},
+                   "n_points": len(cam_pts), "residual_rms_mm": rms,
+                   "note": "base_mm = R @ cam_mm + t ; valid at the working pose (center_coin.py --calibra)"}, f, indent=2)
+    nozzle = {"px": [sum(p[0] for p in pxs) / len(pxs), sum(p[1] for p in pxs) / len(pxs)],
+              "margin": sum(dzs) / len(dzs), "pose": [home.x, home.y, home.z], "n": len(pxs)}
+    save_nozzle()
+    print(f"\nSalvato: camera->base (rms {rms:.1f} mm su {len(cam_pts)} punti) e punta in immagine a "
+          f"({nozzle['px'][0]:.0f},{nozzle['px'][1]:.0f}) px, margine {nozzle['margin']:.0f} mm.")
+    print("Da ora center_coin.py li usa da solo e continua a migliorarli con le tue correzioni.")
 
 
 def trouble(e):
@@ -530,12 +695,17 @@ def main():
         home = ready
     global floor_z
     floor_z = home.z - MAX_DROP_MM
+    load_calibrations(home)
+    if "--calibra" in sys.argv:
+        calibrate(home)
+        return
     print(f"\nPosa di partenza: X{home.x:.0f} Y{home.y:.0f} Z{home.z:.0f} mm "
           "(ci torno tra una moneta e l'altra).")
     print("Per ogni moneta: la centra, scende, la prende e risale, tutto da solo. Tieni la mano vicino all'e-stop.")
     input("Metti una moneta sotto la camera. Invio per iniziare... ")
 
     tries = 0
+    last_cycle = None
     while True:
         print("\nCerco e centro la moneta...")
         try:
@@ -557,6 +727,9 @@ def main():
                 reached = approach(coin)                   # down to the coin
                 if reached is not None:
                     z_low, up_pose = reached
+                    last_cycle = {"home": home, "target": centre_coin.target_used,
+                                  "margin": approach.margin_used,
+                                  "down": Point(up_pose.x, up_pose.y, z_low)}
                     print(f"  giu' a Z{z_low:.0f} mm: prendo la moneta")
                     pick(coin)                             # <- the pump goes here
                     print("  risalgo")
@@ -586,9 +759,12 @@ def main():
                 print(f"non riesco a tornare: {e}")
                 break
         if ok and a == "s":
-            go = input("Moneta fatta. Invio = prossima moneta (togli prima questa se non c'e' ancora "
-                       "la pompa), q = esci... ").strip().lower()
-            if go == "q":
+            go = input("Moneta fatta. Invio = prossima moneta (togli prima questa se non c'e' ancora la pompa), "
+                       "m = la punta non era giusta (correggo la calibrazione), q = esci... ").strip().lower()
+            if go == "m":
+                learn_from_correction(last_cycle)
+                input("Invio per la prossima moneta... ")
+            elif go == "q":
                 break
     print("fine.")
 

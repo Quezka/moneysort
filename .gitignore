@@ -13,3 +13,4 @@ __pycache__/
 
 # per-mount camera calibration (tools/calibrate_camera.py)
 camera_calib.json
+nozzle_calib.json
