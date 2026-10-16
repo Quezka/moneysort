@@ -31,6 +31,100 @@ log = logging.getLogger("armd.stepper")
 # tx_* call (and the home-switch read) goes through this one lock. Calls are microseconds long.
 TX_LOCK = threading.RLock()
 
+TX_SLOTS = 10            # LG_TX_BUF in lgpio: queue entries per GPIO (tx_room == this -> no active record)
+ANCHOR_PERIOD_US = 20000
+
+
+class TxAnchor:
+    """Keeps lgpio's pulse thread from wedging (the real cause of "TX queues stuck").
+
+    lgpio (0.2.2, lgPthTx.c) keeps one record per pulsing GPIO in a list, newest first, and its single
+    timing thread walks the list. When it deletes a *finished head record* it ends the walk early, so the
+    records behind it are skipped for a pass, fall ~20 ms behind and produce a huge negative delay; that is
+    added to a timespec whose tv_nsec then goes negative, clock_nanosleep() returns EINVAL, and the thread
+    spins in `while (clock_nanosleep(...));` for ever (100% CPU, nothing drains, only a restart helps).
+    It needs a finished head with another axis still running behind it: with three axes of different
+    lengths, that is every few dozen moves (and when a jog ends).
+
+    So an always-active record is kept at the head: a silent pulse train (`on = 0`: just writes LOW) on a spare
+    GPIO. Every time an axis gets a NEW record it is inserted at the head, so the anchor is re-created right
+    after (refresh) to stay newest. Axis records then never sit at the head, and the one deletion that
+    does happen at the head (the anchor, once all axes are idle) has nothing active behind it.
+    """
+
+    def __init__(self):
+        self.h = None
+        self.pin = None
+        self.active = False
+        self.steppers = []
+        self._idle = 0
+        self._thread = None
+
+    def configured(self):
+        return self.pin is not None
+
+    def setup(self, h, pin, steppers):
+        self.h, self.pin, self.steppers = h, pin, list(steppers)
+        lgpio.gpio_claim_output(h, pin, 0)
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._watch, daemon=True)
+            self._thread.start()
+
+    def refresh(self):
+        """(Re)create the anchor so it is the newest record (the head of lgpio's list)."""
+        if not self.configured():
+            return
+        with TX_LOCK:
+            if self.active:
+                lgpio.tx_pulse(self.h, self.pin, 0, 0, 0, 0)          # old one off (it becomes a non-head)
+            lgpio.tx_pulse(self.h, self.pin, 0, ANCHOR_PERIOD_US, 0, 0)   # new silent record at the head
+            self.active = True
+
+    def release(self):
+        if not self.configured():
+            return
+        with TX_LOCK:
+            if self.active:
+                lgpio.tx_pulse(self.h, self.pin, 0, 0, 0, 0)
+                self.active = False
+
+    def _watch(self):
+        """Switch the anchor off once every axis has been idle for a moment (no CPU wasted)."""
+        while True:
+            time.sleep(0.05)
+            with TX_LOCK:
+                if not self.active:
+                    continue
+                if any(s.busy() for s in self.steppers):
+                    self._idle = 0
+                    continue
+                self._idle += 1
+                if self._idle >= 2:
+                    self.release()
+                    self._idle = 0
+
+    def alive(self, timeout=0.6):
+        """Is lgpio's pulse thread still running? Queue a 10 ms silent train and see if it finishes.
+
+        A cancelled queue looks empty (room 10, not busy) even when the thread is dead, so this is the
+        only reliable check after a "TX queue stuck": False means only a restart will help.
+        """
+        if not self.configured():
+            return True
+        self.release()
+        with TX_LOCK:
+            lgpio.tx_pulse(self.h, self.pin, 0, 2000, 0, 5)
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            with TX_LOCK:
+                if not lgpio.tx_busy(self.h, self.pin, TX_PWM):
+                    return True
+            time.sleep(0.01)
+        return False
+
+
+ANCHOR = TxAnchor()
+
 # lgpio can't cancel a queued train, so nothing here may wait forever on one: every
 # wait is bounded, and a stuck queue becomes an error you can read, not a silent hang.
 ROOM_TIMEOUT_S = 5.0     # max wait for a free slot in the tx queue
@@ -89,8 +183,11 @@ class Stepper:
                 return False
             with TX_LOCK:
                 try:
-                    if lgpio.tx_room(self.h, self.step_pin, TX_PWM) >= 1:
+                    room = lgpio.tx_room(self.h, self.step_pin, TX_PWM)
+                    if room >= 1:
                         lgpio.tx_pulse(self.h, self.step_pin, half, half, 0, cycles)
+                        if room >= TX_SLOTS:                 # no active record: this call created one (at the head)
+                            ANCHOR.refresh()                 # ...so put the anchor back in front of it
                         return True
                 except lgpio.error as e:                 # queue full
                     if "full" not in str(e).lower():

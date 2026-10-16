@@ -259,13 +259,14 @@ enqueue its next burst if its queue has room; sleep when all queues are full.
 All axes accelerate and run concurrently; positions update once every train ends.
 
 ### Pulse queue hygiene (lgpio)
-`lgpio` can leave its software pulse queue wedged (every axis `room=0 busy=1`, nothing drains; seen on
-tiny moves and fast jogging). Mitigations, all in code: bursts under 8 cycles are merged
-(`domain/planning.merge_short`); every `tx_*` call and the home-switch read goes through one lock
-(`hardware/stepper.TX_LOCK`) because status polls used to race the move thread; every wait is bounded and a
-timeout hard-cancels the queue (`Stepper.cancel`, `tx_pulse(0,0)`); and `ArmController` restarts the daemon
-(`recover()`, `os._exit(70)`, systemd `Restart=on-failure`) when a cancel does not hold. Motors are never
-disabled by this. Details and symptoms: [`PICKING.md`](PICKING.md#when-the-pulse-queue-wedges-tx-queues-stuck).
+`lgpio`'s timing thread has a bug (`lgPthTx.c` 0.2.2): deleting a finished *head* record ends its walk early, which
+can end in an endless `clock_nanosleep` EINVAL loop (every axis `room=0 busy=1`, 100% CPU, only a restart helps).
+It needs the last-started axis to finish while another still runs, i.e. every few dozen multi-axis moves.
+`hardware/stepper.TxAnchor` keeps a silent always-active record (spare GPIO `ANCHOR_PIN`) at the head so no axis
+record ever is; `tests/test_lgpio_model.py` models the C thread and proves it. Also in code: one lock around every
+`tx_*` call (`TX_LOCK`), bounded waits with a hard cancel (`Stepper.cancel`), and `ArmController.recover()`
+(`os._exit(70)`, systemd `Restart=on-failure`) when `ANCHOR.alive()` says the thread is dead. Motors are never
+disabled by this. Details: [`PICKING.md`](PICKING.md#when-the-pulse-queue-wedges-tx-queues-stuck).
 
 ### Following a coin without identifying it
 The camera is on the arm, so a move shifts the whole picture. `Camera.mark_ref()` / `shift()` (`POST /ref`,

@@ -159,26 +159,34 @@ Definitions live in `tools/center_params.py` (one table: default, type, range, d
 
 ## When the pulse queue wedges ("TX queues stuck")
 
-`lgpio`'s software pulse queue sometimes stops draining: every axis shows `room=0 busy=1` and moves
-fail with `TX queues stuck: no room for 5.0s`. A cancel (`tx_pulse(0,0)`) empties the queue, but the
-next move can wedge again; only restarting the process reliably fixes it. The cause is not proven.
-Seen so far: it happens on **tiny moves** (a few mm, mostly right after another move) and during
-fast jogging, both of which queue very short bursts. What is in place:
+**Root cause (found in lgpio's source, `lgPthTx.c` of 0.2.2):** lgpio keeps one record per pulsing GPIO in a
+list, newest first, and one timing thread walks it. When the thread deletes a **finished head record** it
+ends the walk early, so the records behind it are skipped for that pass and fall ~20 ms behind. The next
+pass computes a huge negative delay and adds it to a `timespec`; if that pass crossed a second boundary
+(~2% of the time) `tv_nsec` goes negative, `clock_nanosleep()` fails with `EINVAL`, and the C code spins on
+`while (clock_nanosleep(...));` for ever: the thread burns 100% of a core, nothing drains, every axis shows
+`room=0 busy=1`. A cancel only clears the flags (the queue "looks" empty), so the next move wedges again;
+only a restart helps. (Without the fatal 2%, the same bug still makes the other axes stall ~20 ms and
+catch up in a burst of fast pulses: lost steps.)
 
-- tiny bursts are **merged** (no burst under 8 cycles, `domain/planning.py`), keeping the queue feed
-  away from lgpio's idle/wake window;
-- every lgpio `tx_*` call and the home-switch read goes through **one lock** (HTTP status polls used
-  to run concurrently with the move thread);
-- on a stuck queue `armd` cancels it and logs the raw `room/busy` values; a **second wedge within
-  3 minutes**, or an idle axis with no free slot after a cancel, **restarts the daemon** (motors stay
-  enabled so the arm holds its pose; axes come back un-homed);
-- `center_coin.py` waits for `armd`, **re-homes** if it lost the position, goes back to the working pose
-  and re-runs the centring by itself (up to 3 times);
-- manual: `POST /recover`, or the "Recupera (riavvia)" button on the dashboard (shown only while
-  pulses are still running).
+The trigger is always: **the most recently created record (the last axis to start) finishes while another
+axis is still running behind it**: three axes of different lengths in `move_many` (the last axis is shorter),
+or the end of a jog. That is why it looked random (~3% of moves), why tiny moves, pps and timing made no
+difference, and why `tests/test_lgpio_model.py` (a line-by-line model of the C thread) reproduces it.
 
-If it keeps happening, read `journalctl -u moneysort-arm` for the `tx_room/tx_busy` lines and the
-`RECOVERY:` entries. A power glitch can cause the same symptoms (check `vcgencmd get_throttled`).
+**Fix (`hardware/stepper.TxAnchor`):** a silent, always-active pulse record (writes only LOW) on a spare GPIO
+(`ANCHOR_PIN` = GPIO21, nothing needs to be wired to it) is kept at the head of the list: every time an axis
+gets a NEW record (detected by `tx_room == 10` before the pulse) the anchor is re-created right after, so it
+stays the newest. Axis records are then never the head, and the anchor itself is only removed (when all axes
+have been idle for 100 ms) with nothing active behind it. If it still ever happens: `ANCHOR.alive()` queues a
+10 ms silent train to check whether the thread runs; if not, the daemon **restarts immediately** (motors stay
+enabled, axes come back un-homed) and `center_coin.py` waits, re-homes and re-runs by itself.
+
+Other measures that remain in place: every lgpio `tx_*` call goes through one lock; waits are bounded with a
+hard cancel; a second wedge within 3 minutes restarts the daemon; manual `POST /recover` or the dashboard's
+"Recupera (riavvia)" button (shown only while pulses are still running). Merging tiny bursts
+(`domain/planning.merge_short`) stays but was not the cause. Logs: `journalctl -u moneysort-arm` shows the raw
+`tx_room/tx_busy` and `RECOVERY:` lines. A power glitch can look similar (`vcgencmd get_throttled`).
 
 ## API used (all on `armd`, :8080)
 

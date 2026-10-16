@@ -11,6 +11,7 @@ import time
 from moneysort.app.arm import Arm
 from moneysort.domain import jog as jogmath
 from moneysort.domain.kinematics import JointAngles
+from moneysort.hardware.stepper import ANCHOR
 
 log = logging.getLogger("armd.ctrl")
 
@@ -58,6 +59,9 @@ class ArmController:
         self._last_wedge = now
 
         def check():
+            if not ANCHOR.alive():                       # lgpio's pulse thread is dead: nothing else helps
+                self.recover(f"lgpio pulse thread not running ({why})")
+                return
             if again:                                    # cancel only buys a few seconds: restart for real
                 time.sleep(1.0)
                 self.recover(f"queue wedged again within 3 min of a cancel ({why})")

@@ -490,13 +490,14 @@ def approach(coin, margin=None, dxy=(0.0, 0.0)):
             break
         except kinematics.OutOfReach:
             z += 1.0
+    up = reachable_pose(over) or over               # the spot above the coin may be out of reach at the working height
     if z >= start.z - 1.0:
         print("  non posso scendere a questa distanza dalla base: avvicina la moneta.")
-        return start.z, over
+        return start.z, up
     if z > target_z + 1.0:
         print(f"  piu' in basso di Z{z:.0f} mm non arrivo a questa distanza dalla base.")
     move_to(Point(over.x, over.y, z))           # x, y correction and descent in one smooth move
-    return z, over
+    return z, up                                # where to rise to: the highest reachable pose above the coin
 
 
 def _read_json(path):

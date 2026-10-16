@@ -43,6 +43,15 @@ Shared: `ENA-` / `PUL-` / `DIR-` → GND bus (e.g. header pin 6).
 | Pulse  | PUL+            | GPIO23 | 16 |
 | Dir    | DIR+            | GPIO24 | 18 |
 
+## Spare output: the lgpio anchor
+
+| Signal | BCM | Header pin |
+|--------|-----|-----------|
+| Anchor (silent record, outputs LOW only; **leave unconnected**) | GPIO21 | 40 |
+
+`ANCHOR_PIN` in `config.py`. It keeps lgpio's pulse thread from wedging (see `hardware/stepper.TxAnchor` and
+[`PICKING.md`](PICKING.md#when-the-pulse-queue-wedges-tx-queues-stuck)). Do not use it for anything else.
+
 ## Calibration & travel
 
 Measured at the output shaft (folds in microstepping + gearing), at 20000 pps

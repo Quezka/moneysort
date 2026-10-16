@@ -15,6 +15,10 @@ GPIOCHIP = 0         # lgpio.gpiochip_open() index
 # the Steppers) because lgpio can't let three Steppers each claim the same pin.
 ENABLE_PIN = 26      # BCM GPIO26 = header pin 37
 
+# Spare output that carries lgpio's "anchor" pulse record (see hardware/stepper.TxAnchor):
+# it only ever outputs LOW, so nothing needs to be wired to it. Must not be used by anything else.
+ANCHOR_PIN = 21      # BCM GPIO21 = header pin 40
+
 # --- shoulder travel limit --------------------------------------------------
 # The shoulder motor stalls (loses steps) when the arm is fully extended: the
 # gravity moment is largest with the upper arm horizontal (90 deg). Stop short of

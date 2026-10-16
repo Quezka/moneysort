@@ -13,9 +13,9 @@ import time
 
 import lgpio
 
-from moneysort.config import ENABLE_PIN, GPIOCHIP, JOINTS, RETURN_ZERO_PPS
+from moneysort.config import ANCHOR_PIN, ENABLE_PIN, GPIOCHIP, JOINTS, RETURN_ZERO_PPS
 from moneysort.domain import kinematics
-from moneysort.hardware.stepper import ROOM_TIMEOUT_S, TX_LOCK, Stepper
+from moneysort.hardware.stepper import ANCHOR, ROOM_TIMEOUT_S, TX_LOCK, Stepper
 
 
 log = logging.getLogger("armd.arm")
@@ -43,6 +43,8 @@ class Arm:
             self.motors[name] = Stepper(
                 self.h, c["step"], c["dir"],
                 invert_dir=c.get("invert", False), abort=self.abort, **kw)
+        if ANCHOR_PIN is not None:                  # silent head record that keeps lgpio's tx thread from wedging
+            ANCHOR.setup(self.h, ANCHOR_PIN, self.motors.values())
         # Claim home-switch pins as pull-up inputs (NC to GND).
         self.home_pins = {}
         for name, c in joints.items():
@@ -334,11 +336,14 @@ class Arm:
         return {name: round(m.angle, 1) for name, m in self.motors.items()}
 
     def close(self):
+        ANCHOR.release()
         for m in self.motors.values():
             m.close()
         for pin in self.home_pins.values():
             lgpio.gpio_free(self.h, pin)
         lgpio.gpio_free(self.h, self.enable_pin)
+        if ANCHOR_PIN is not None:
+            lgpio.gpio_free(self.h, ANCHOR_PIN)
         lgpio.gpiochip_close(self.h)
 
     def __enter__(self):
