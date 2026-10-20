@@ -2,13 +2,16 @@
 """Dashboard presentation: the HTML PAGE plus system-metric helpers.
 
 Pure presentation/telemetry for the Money Sorter web UI, dependency-free (Python
-standard library only). The armd server (``interface/server.py``) imports
+standard library plus the pure ``domain.kinematics`` link lengths for the 3D view). The armd server (``interface/server.py``) imports
 ``PAGE`` and these helpers, owns the arm, and assembles ``/status``. This module
 touches no GPIO and runs no server of its own.
 """
+import json
 import os
 import socket
 import subprocess
+
+from moneysort.domain import kinematics
 
 
 # --- metric collection ------------------------------------------------------
@@ -148,6 +151,9 @@ PAGE = """<!doctype html><html lang="it"><head>
   .camwrap { position: relative; background: #0d1117; border: 1px solid #21262d;
              border-radius: 14px; overflow: hidden; aspect-ratio: 1/1; width: 340px; max-width: 46vw; }
   .cam { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #v3d { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: none; touch-action: none; }
+  .viewbtn { position: absolute; top: 8px; right: 8px; z-index: 2; padding: 6px 14px; font-size: 14px;
+             background: #30363d; border-radius: 10px; opacity: .92; }
   .camoff { position: absolute; inset: 0; display: flex; align-items: center;
             justify-content: center; color: #6e7681; font-size: 15px; }
   .joint .value { font-size: 26px; }
@@ -254,6 +260,8 @@ PAGE = """<!doctype html><html lang="it"><head>
       <div class="section"><span class="dot" id="camdot"></span><span data-t>Camera</span> <span id="camstate" class="idle" style="font-size:13px"></span></div>
       <div class="camwrap">
         <img id="cam" class="cam" alt="">
+        <canvas id="v3d"></canvas>
+        <button id="v3dbtn" class="viewbtn">3D</button>
         <div id="camoff" class="camoff" data-t>camera offline</div>
       </div>
     </div>
@@ -411,6 +419,7 @@ async function tick() {
   document.getElementById("camstate").textContent = cam.ok ? (cam.desc || t("live")) : (cam.error || t("offline"));
   if (cam.ok) { coff.style.display = "none"; cimg.style.display = ""; }   // pollCam sets the image
   else { cimg.style.display = "none"; coff.style.display = ""; }
+  kick3d();
 }
 
 document.getElementById("lasterr").onclick = async (e) => {
@@ -512,6 +521,7 @@ tick(); setInterval(tick, 1500);
 function showCoins(hdr) {
   let c = {coins: []}; try { c = JSON.parse(hdr) || c; } catch {}
   document.getElementById("coincount").textContent = c.coins.length || "";
+  coinsNow = c.coins.filter(k => k.base).map(k => k.base);
   const box = document.getElementById("coins");
   if (!c.coins.length) { box.innerHTML = `<span class="idle">${t("no coins in view")}</span>`; return; }
   const away = c.at_survey === false ? `<div class="sub warn">${t("away from survey pose")}</div>` : "";
@@ -525,7 +535,7 @@ function showCoins(hdr) {
 // Poll the annotated frame (works on WebKit/cog where MJPEG <img> doesn't).
 let camUrl = null, camBusy = false;
 async function pollCam() {
-  if (camBusy || !last.camera || !last.camera.ok) return;
+  if (camBusy || view3d || !last.camera || !last.camera.ok) return;
   camBusy = true;
   try {
     const r = await fetch("/detected?t=" + Date.now());
@@ -539,4 +549,96 @@ async function pollCam() {
   } catch {} finally { camBusy = false; }
 }
 setInterval(pollCam, 250);   // ~4 fps
-</script></body></html>"""
+
+// ---- 3D view: the arm drawn from its joint angles on a plain 2D canvas (no WebGL, light on the Pi) ----
+const GEOM = __GEOM__;                 // link lengths from domain/kinematics.py
+let view3d = false, coinsNow = [];
+const V = { az: -0.7, el: 0.5 };       // orbit angles (drag to turn)
+const shown = { x: 0, y: 0, z: 0 };    // joints as drawn: eased toward the real ones
+let animTimer = null, dragging = false;
+
+function proj(P, w, h) {
+  const ca = Math.cos(V.az), sa = Math.sin(V.az), ce = Math.cos(V.el), se = Math.sin(V.el);
+  const x1 = P[0] * ca - P[1] * sa, y1 = P[0] * sa + P[1] * ca;
+  const sc = Math.min(w, h) / 900;
+  return [w / 2 + x1 * sc, h * 0.62 - (P[2] * ce + y1 * se - 120) * sc];
+}
+function armPoints(j) {
+  const rad = d => d * Math.PI / 180, ry = rad(j.y), rx = rad(j.x), rz = rad(j.z);
+  const S = [0, GEOM.D];                                         // (radial, height)
+  const E = [S[0] + GEOM.L1 * Math.sin(ry), S[1] + GEOM.L1 * Math.cos(ry)];
+  const W = [E[0] + GEOM.LF * Math.cos(rx), E[1] + GEOM.LF * Math.sin(rx)];
+  const T = [W[0] + GEOM.LT, W[1]];                              // the levelling wrist keeps the tool horizontal
+  const at = r => [r[0] * Math.cos(rz), r[0] * Math.sin(rz), r[1]];
+  return { B: [0, 0, 0], S: at(S), E: at(E), W: at(W), T: at(T) };
+}
+function draw3d() {
+  const cv = document.getElementById("v3d"), w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+  const g = cv.getContext("2d"), pt = P => proj(P, w, h);
+  g.clearRect(0, 0, w, h);
+  g.lineCap = g.lineJoin = "round";
+  const line = (pts, col, wd) => {
+    g.beginPath(); pts.forEach((P, i) => { const q = pt(P); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
+    g.strokeStyle = col; g.lineWidth = wd; g.stroke();
+  };
+  for (let r = 100; r <= 400; r += 100) {                        // floor rings
+    const ring = []; for (let a = 0; a <= 48; a++) ring.push([r * Math.cos(a / 48 * 6.2832), r * Math.sin(a / 48 * 6.2832), 0]);
+    line(ring, r === 400 ? "#30363d" : "#21262d", 1);
+  }
+  line([[-420, 0, 0], [420, 0, 0]], "#30363d", 1); line([[0, -420, 0], [0, 420, 0]], "#30363d", 1);
+  line([[0, 0, 0], [90, 0, 0]], "#f85149", 2); line([[0, 0, 0], [0, 90, 0]], "#3fb950", 2);   // X red, Y green
+  coinsNow.forEach(c => {                                        // detected coins on the table (base frame)
+    const q = pt([c[0], c[1], 0]); g.beginPath(); g.arc(q[0], q[1], 4, 0, 6.2832);
+    g.fillStyle = "#d29922"; g.fill();
+  });
+  const A = armPoints(shown), tp = pt(A.T), ground = pt([A.T[0], A.T[1], 0]);
+  line([A.T, [A.T[0], A.T[1], 0]], "#30363d", 1);                // plumb line + shadow of the tool
+  g.beginPath(); g.arc(ground[0], ground[1], 5, 0, 6.2832); g.fillStyle = "#30363d"; g.fill();
+  line([A.B, A.S], "#6e7681", 12);                               // column
+  line([A.S, A.E], "#58a6ff", 9);                                // upper arm
+  line([A.E, A.W], "#1f6feb", 8);                                // forearm
+  line([A.W, A.T], "#8b949e", 5);                                // level tool
+  [A.S, A.E, A.W].forEach(P => { const q = pt(P); g.beginPath(); g.arc(q[0], q[1], 6, 0, 6.2832); g.fillStyle = "#e6edf3"; g.fill(); });
+  g.beginPath(); g.arc(tp[0], tp[1], 5, 0, 6.2832); g.fillStyle = "#f85149"; g.fill();
+}
+function animate3d() {
+  animTimer = null;
+  if (!view3d) return;
+  const j = (last.arm && last.arm.joints) || {};
+  let moving = dragging;
+  ["x", "y", "z"].forEach(k => {
+    const want = j[k] != null ? j[k] : shown[k], d = want - shown[k];
+    if (Math.abs(d) > 0.05) { shown[k] += d * 0.3; moving = true; } else shown[k] = want;
+  });
+  draw3d();
+  if (moving) animTimer = setTimeout(animate3d, 50);            // ~20 fps only while something changes
+}
+function kick3d() { if (view3d && !animTimer) animTimer = setTimeout(animate3d, 0); }
+
+document.getElementById("v3dbtn").onclick = () => {
+  view3d = !view3d;
+  document.getElementById("v3d").style.display = view3d ? "block" : "none";
+  document.getElementById("cam").style.visibility = view3d ? "hidden" : "visible";
+  document.getElementById("camoff").style.visibility = view3d ? "hidden" : "visible";
+  document.getElementById("v3dbtn").textContent = view3d ? t("Camera") : "3D";
+  kick3d();
+};
+(function () {                                                   // drag to orbit
+  const cv = document.getElementById("v3d"); let px = null, py = null;
+  const pos = e => { const t0 = (e.touches && e.touches[0]) || e; return [t0.clientX, t0.clientY]; };
+  cv.addEventListener("pointerdown", e => { [px, py] = pos(e); dragging = true; });
+  window.addEventListener("pointerup", () => { px = null; dragging = false; });
+  window.addEventListener("pointermove", e => {
+    if (px === null) return;
+    const [x, y] = pos(e);
+    V.az += (x - px) * 0.01; V.el = Math.max(0.05, Math.min(1.45, V.el + (y - py) * 0.01));
+    px = x; py = y; kick3d();
+  });
+})();
+setInterval(() => { if (view3d) tick(); }, 400);                 // follow the arm closely while the 3D view is open
+</script></body></html>""".replace("__GEOM__", json.dumps({
+    "L1": kinematics.UPPER_ARM_MM, "LF": kinematics.FOREARM_MM,
+    "LT": kinematics.TOOL_REACH_MM, "D": kinematics.V_OFFSET_MM}))

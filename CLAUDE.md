@@ -65,6 +65,8 @@ the documented CLI paths don't change).
     dashboard + JSON API on **:8080** (binds `0.0.0.0`, reachable from any LAN PC),
     incl. the camera feed (`/camera`, `/camera?detect=1`), `/detected`, `POST /detect`.
   - `dashboard.py` — the HTML `PAGE` + stdlib system-metric helpers (no GPIO).
+    The camera panel has a **3D** toggle: the arm drawn from the joint angles on a plain 2D canvas
+    (orthographic projection, drag to orbit, eased motion at ~20 fps only while it moves; no WebGL, camera polling paused).
     The page is in Italian; every on-screen string goes through `t()` with its Italian in the `IT`
     table (add `?lang=en` to the address for English). Add both when adding UI text.
   - `cli.py` — CLI HTTP client (see `docs/USAGE.md`).

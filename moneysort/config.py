@@ -19,6 +19,11 @@ ENABLE_PIN = 26      # BCM GPIO26 = header pin 37
 # it only ever outputs LOW, so nothing needs to be wired to it. Must not be used by anything else.
 ANCHOR_PIN = 21      # BCM GPIO21 = header pin 40
 
+# --- vacuum pickup (docs/PUMP.md) ------------------------------------------
+# Both drive a logic-level MOSFET gate (HIGH = on); 10 k pull-downs keep them off while the Pi boots.
+PUMP_PIN = 16        # BCM GPIO16 = header pin 36: pump runs while HIGH
+VALVE_PIN = 20       # BCM GPIO20 = header pin 38: 3/2 valve energised (cup -> pump) while HIGH; LOW = cup vented
+
 # --- shoulder travel limit --------------------------------------------------
 # The shoulder motor stalls (loses steps) when the arm is fully extended: the
 # gravity moment is largest with the upper arm horizontal (90 deg). Stop short of
