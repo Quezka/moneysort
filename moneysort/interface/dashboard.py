@@ -151,6 +151,13 @@ PAGE = """<!doctype html><html lang="it"><head>
   .camwrap { position: relative; background: #0d1117; border: 1px solid #21262d;
              border-radius: 14px; overflow: hidden; aspect-ratio: 1/1; width: 340px; max-width: 46vw; }
   .cam { width: 100%; height: 100%; object-fit: contain; display: block; }
+  /* 3D open: the panel fills the whole screen (explicit offsets, no inset: old kiosk WebKit) */
+  .camwrap.big { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; max-width: none; z-index: 50;
+                 border: none; border-radius: 0; aspect-ratio: auto; }
+  .bigstop { display: none; position: absolute; left: 10px; top: 8px; z-index: 2; padding: 8px 16px; font-size: 15px;
+             background: #da3633; border-radius: 10px; box-shadow: 0 3px 0 #a5201d; }
+  .camwrap.big .bigstop { display: block; }
+  .camwrap.big .viewbtn { padding: 10px 20px; font-size: 16px; }
   #v3d { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: none; touch-action: none; }
   .viewbtn { position: absolute; top: 8px; right: 8px; z-index: 2; padding: 6px 14px; font-size: 14px;
              background: #30363d; border-radius: 10px; opacity: .92; }
@@ -258,10 +265,11 @@ PAGE = """<!doctype html><html lang="it"><head>
   <div class="cammain">
     <div class="camcol">
       <div class="section"><span class="dot" id="camdot"></span><span data-t>Camera</span> <span id="camstate" class="idle" style="font-size:13px"></span></div>
-      <div class="camwrap">
+      <div class="camwrap" id="camwrap">
         <img id="cam" class="cam" alt="">
         <canvas id="v3d"></canvas>
         <button id="v3dbtn" class="viewbtn">3D</button>
+        <button id="bigstop" class="bigstop">&#9940; STOP</button>
         <div id="camoff" class="camoff" data-t>camera offline</div>
       </div>
     </div>
@@ -711,9 +719,11 @@ async function pollPose() {
 }
 setInterval(pollPose, 300);
 
+document.getElementById("bigstop").onclick = () => document.getElementById("estop").click();   // stop stays one tap away
 document.getElementById("v3dbtn").onclick = () => {
   view3d = !view3d;
   document.getElementById("v3d").style.display = view3d ? "block" : "none";
+  document.getElementById("camwrap").classList.toggle("big", view3d);       // full screen while the 3D view is open
   document.getElementById("cam").style.visibility = view3d ? "hidden" : "visible";
   document.getElementById("camoff").style.visibility = view3d ? "hidden" : "visible";
   document.getElementById("v3dbtn").textContent = view3d ? t("Camera") : "3D";
