@@ -41,7 +41,8 @@ def detect_coins(bgr, depth_at, deproject, *, square=True, **params):
 
     The D435 can't read depth much closer than min_z. With require_depth=False a
     circle whose depth is missing/out of range is still returned, with
-    depth_ok=False, depth_m=0 and cam_mm=None: enough to centre it in the image.
+    depth_ok=False, depth_m=0 and cam_mm=None: enough to centre it in the image. depth_raw is
+    what the sensor read there (0 = no reading), so yellow can be told apart: out of range vs a hole.
     """
     p = {**DEFAULTS, **params}
     H, W = bgr.shape[:2]
@@ -64,8 +65,10 @@ def detect_coins(bgr, depth_at, deproject, *, square=True, **params):
             if not d or not (p["min_z"] <= d <= p["max_z"]):
                 if not p["require_depth"]:
                     coins.append({"px": fx, "py": fy, "r": int(r), "depth_ok": False,
-                                  "depth_m": 0.0, "cam_mm": None})
+                                  "depth_m": 0.0, "depth_raw": float(d or 0.0), "cam_mm": None})
                     cv2.circle(out, (cx, cy), r, (0, 220, 255), 2)      # yellow = no depth
+                    cv2.putText(out, f"{d:.2f}m" if d else "hole", (cx - r, cy - r - 4),   # why: out of range or no reading
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 255), 1)
                     cv2.circle(out, (cx, cy), 2, (0, 0, 255), 3)
                 else:
                     cv2.circle(out, (cx, cy), r, (60, 60, 60), 1)       # grey = rejected
