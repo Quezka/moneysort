@@ -45,6 +45,7 @@ from moneysort.domain import kinematics
 from moneysort.domain.kinematics import Point
 from moneysort.hardware.camera import Camera
 from moneysort.interface import dashboard   # metric helpers, PAGE, system_action
+from moneysort.interface.preview import SharedPreview
 
 log = logging.getLogger("armd")
 
@@ -61,6 +62,7 @@ def _git_version():
         return "?"
 
 
+DETECT_PREVIEW_PERIOD = 0.4                 # s between annotated preview frames (detection is ~a core of CPU)
 VERSION = _git_version()
 BUILD = str(int(time.time()))               # changes each daemon start -> kiosk auto-reloads
 
@@ -120,6 +122,8 @@ def make_handler(ctrl, camera):
         if target["px"] is None or time.monotonic() - target["t"] > 60:
             return None                                # stale: the script stopped updating it
         return (target["px"], target["py"])
+
+    detected = SharedPreview(lambda: camera.detect(highlight=highlight())[1], DETECT_PREVIEW_PERIOD)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -185,22 +189,29 @@ def make_handler(ctrl, camera):
                 self._send(json.dumps({"error": camera.error or "no camera"}), code=503)
                 return
             annotate = "detect" in self.path               # /camera?detect=1 -> coins drawn
-            period = 0.4 if annotate else 1 / 15.0         # detection is heavy (a core of CPU at 5 fps) -> ~2.5 fps
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
+            frames = detected.frames() if annotate else self._plain_frames()
             try:
-                while True:
-                    jpg = camera.detect(highlight=highlight())[1] if annotate else camera.jpeg()
-                    if jpg:
-                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
-                        self.wfile.write(f"Content-Length: {len(jpg)}\r\n\r\n".encode())
-                        self.wfile.write(jpg)
-                        self.wfile.write(b"\r\n")
-                    time.sleep(period)
+                for jpg in frames:
+                    self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
+                    self.wfile.write(f"Content-Length: {len(jpg)}\r\n\r\n".encode())
+                    self.wfile.write(jpg)
+                    self.wfile.write(b"\r\n")
             except (BrokenPipeError, ConnectionResetError):
                 pass                                       # client closed the stream
+            finally:
+                frames.close()                             # lets the shared preview see the viewer left
+
+        @staticmethod
+        def _plain_frames():
+            while True:
+                jpg = camera.jpeg()
+                if jpg:
+                    yield jpg
+                time.sleep(1 / 15.0)
 
         def do_POST(self):
             if not self.path.startswith(("/jog", "/detect", "/target", "/ref", "/shift")):    # frequent calls stay quiet
