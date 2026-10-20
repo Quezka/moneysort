@@ -43,6 +43,16 @@ Shared: `ENA-` / `PUL-` / `DIR-` → GND bus (e.g. header pin 6).
 | Pulse  | PUL+            | GPIO23 | 16 |
 | Dir    | DIR+            | GPIO24 | 18 |
 
+## Vacuum pickup (not wired yet)
+
+| Signal | BCM | Header pin |
+|--------|-----|-----------|
+| Pump MOSFET gate (HIGH = pump on) | GPIO16 | 36 |
+| Valve MOSFET gate (HIGH = cup connected to the pump, LOW = vented) | GPIO20 | 38 |
+| Vacuum sensor SDA / SCL (I2C) | GPIO2 / GPIO3 | 3 / 5 |
+
+`PUMP_PIN` / `VALVE_PIN` in `config.py`; circuit and parts in [`PUMP.md`](PUMP.md). 10 k pull-downs on both gates.
+
 ## Spare output: the lgpio anchor
 
 | Signal | BCM | Header pin |

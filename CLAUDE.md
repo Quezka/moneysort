@@ -143,4 +143,6 @@ detected coin → base frame → `move_to`).
   calibration, settings, recovery from a wedged lgpio queue.
 - `docs/CAMERA_MOUNT.md` — D435 mount for the front of the arm (parametric 3D model in `cad/camera_mount.py`, STL, notes).
 - `docs/GRIPPER.md` — suction-cup research for picking coins (pump + release valve; not built yet).
+- `docs/PUMP.md` — engineering of the vacuum pickup: force budget, pneumatics, MOSFET driver, spring-loaded nozzle
+  (`cad/pickup_nozzle.py`), `hardware/gripper.py`; not fitted, not yet wired into armd.
 - `docs/USAGE.md` — commanding the arm from a terminal (`arm_test.py` + curl API).

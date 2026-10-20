@@ -550,59 +550,140 @@ async function pollCam() {
 }
 setInterval(pollCam, 250);   // ~4 fps
 
-// ---- 3D view: the arm drawn from its joint angles on a plain 2D canvas (no WebGL, light on the Pi) ----
+// ---- 3D view: the arm as flat-shaded plates on a plain 2D canvas (no WebGL, light on the Pi) ----
 const GEOM = __GEOM__;                 // link lengths from domain/kinematics.py
 let view3d = false, coinsNow = [];
 const V = { az: -0.7, el: 0.5 };       // orbit angles (drag to turn)
 const shown = { x: 0, y: 0, z: 0 };    // joints as drawn: eased toward the real ones
-let animTimer = null, dragging = false;
+let animTimer = null, dragging = false, floorKey = "", floorCv = null;
+const LIGHT = (() => { const l = [0.4, -0.5, 0.8], n = Math.hypot(l[0], l[1], l[2]); return l.map(v => v / n); })();
+const C_PLATE = [122, 132, 145], C_ARM = [118, 146, 180], C_DARK = [30, 34, 40], C_BASE = [150, 160, 170],
+      C_WHITE = [225, 230, 236], C_HUB = [92, 101, 113];
 
+function viewVec() {                   // unit vector from the scene toward the viewer
+  const ca = Math.cos(V.az), sa = Math.sin(V.az), ce = Math.cos(V.el), se = Math.sin(V.el);
+  return [-ce * sa, -ce * ca, se];
+}
 function proj(P, w, h) {
   const ca = Math.cos(V.az), sa = Math.sin(V.az), ce = Math.cos(V.el), se = Math.sin(V.el);
   const x1 = P[0] * ca - P[1] * sa, y1 = P[0] * sa + P[1] * ca;
-  const sc = Math.min(w, h) / 900;
-  return [w / 2 + x1 * sc, h * 0.62 - (P[2] * ce + y1 * se - 120) * sc];
+  const sc = Math.min(w, h) / 780;
+  return [w / 2 + x1 * sc, h * 0.66 - (P[2] * ce + y1 * se - 120) * sc];
 }
-function armPoints(j) {
-  const rad = d => d * Math.PI / 180, ry = rad(j.y), rx = rad(j.x), rz = rad(j.z);
-  const S = [0, GEOM.D];                                         // (radial, height)
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+// A convex 2D outline (in the plane spanned by U and V, around O) extruded from w0 to w1 along W.
+function extrude(out, poly, O, U, V3, W, w0, w1, col) {
+  let area = 0;
+  for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; area += a[0] * b[1] - b[0] * a[1]; }
+  const sg = area < 0 ? -1 : 1;
+  const at = (p, w) => [O[0] + U[0] * p[0] + V3[0] * p[1] + W[0] * w, O[1] + U[1] * p[0] + V3[1] * p[1] + W[1] * w,
+                        O[2] + U[2] * p[0] + V3[2] * p[1] + W[2] * w];
+  out.push({ pts: poly.map(p => at(p, w0)), n: W.map(v => -v), col: col });
+  out.push({ pts: poly.map(p => at(p, w1)), n: W, col: col });
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    let nx = (b[1] - a[1]) * sg, ny = -(b[0] - a[0]) * sg; const nl = Math.hypot(nx, ny) || 1;
+    nx /= nl; ny /= nl;
+    out.push({ pts: [at(a, w0), at(b, w0), at(b, w1), at(a, w1)],
+               n: [U[0] * nx + V3[0] * ny, U[1] * nx + V3[1] * ny, U[2] * nx + V3[2] * ny], col: col });
+  }
+}
+const rect = (r0, r1, h0, h1) => [[r0, h0], [r1, h0], [r1, h1], [r0, h1]];
+function circle(c, r, n) { const p = []; for (let i = 0; i < n; i++) p.push([c[0] + r * Math.cos(i / n * 6.2832), c[1] + r * Math.sin(i / n * 6.2832)]); return p; }
+function bar(A, B, wa, wb) {           // a tapered bar from A to B (width wa at A, wb at B)
+  const dx = B[0] - A[0], dy = B[1] - A[1], l = Math.hypot(dx, dy) || 1, px = -dy / l, py = dx / l;
+  return [[A[0] + px * wa, A[1] + py * wa], [B[0] + px * wb, B[1] + py * wb], [B[0] - px * wb, B[1] - py * wb], [A[0] - px * wa, A[1] - py * wa]];
+}
+
+function sceneFaces(j) {
+  const rad = d => d * Math.PI / 180, ry = rad(j.y), rx = rad(j.x), rz = rad(j.z), cz = Math.cos(rz), sz = Math.sin(rz);
+  const U = [cz, sz, 0], Vz = [0, 0, 1], W = [-sz, cz, 0], O = [0, 0, 0], faces = [];
+  const S = [0, GEOM.D];
   const E = [S[0] + GEOM.L1 * Math.sin(ry), S[1] + GEOM.L1 * Math.cos(ry)];
-  const W = [E[0] + GEOM.LF * Math.cos(rx), E[1] + GEOM.LF * Math.sin(rx)];
-  const T = [W[0] + GEOM.LT, W[1]];                              // the levelling wrist keeps the tool horizontal
-  const at = r => [r[0] * Math.cos(rz), r[0] * Math.sin(rz), r[1]];
-  return { B: [0, 0, 0], S: at(S), E: at(E), W: at(W), T: at(T) };
+  const Wr = [E[0] + GEOM.LF * Math.cos(rx), E[1] + GEOM.LF * Math.sin(rx)];
+  const T = [Wr[0] + GEOM.LT, Wr[1]];                            // the levelling wrist keeps the tool horizontal
+  const up = [-Math.sin(rx), Math.cos(rx)];                      // forearm "above" side
+  const A = (p, o) => [p[0] + o[0], p[1] + o[1]];
+  const k = (v, s) => [v[0] * s, v[1] * s];
+  // fixed turntable (does not turn) and the turning disc
+  extrude(faces, circle([0, 0], 100, 14), O, [1, 0, 0], [0, 1, 0], [0, 0, 1], 0, 22, C_BASE);
+  extrude(faces, circle([0, 0], 78, 14), O, [1, 0, 0], [0, 1, 0], [0, 0, 1], 22, 44, C_HUB);
+  // turning part: column, rear motor, shoulder hub, upper arm, elbow hub
+  const part = (poly, a, b, col) => extrude(faces, poly, O, U, Vz, W, a, b, col);
+  part([[-55, 44], [60, 44], [45, S[1] - 6], [-35, S[1] - 6]], -38, 38, C_PLATE);
+  part(rect(-125, -50, 85, 150), 38, 84, C_DARK);                // stepper motor on the side
+  part(circle(S, 32, 12), -50, 50, C_HUB);
+  part(bar(S, E, 30, 20), -46, -38, C_ARM); part(bar(S, E, 30, 20), 38, 46, C_ARM);
+  part(circle(E, 26, 12), -52, 52, C_HUB);
+  // forearm: two plates plus a levelling rod above them, joined by short links
+  const R = k(up, 70), Er = A(E, R), Wrr = A(Wr, R);
+  part(bar(E, Wr, 24, 16), -40, -33, C_PLATE); part(bar(E, Wr, 24, 16), 33, 40, C_PLATE);
+  part(bar(Er, Wrr, 6, 6), -42, -36, C_ARM); part(bar(Er, Wrr, 6, 6), 36, 42, C_ARM);
+  part(bar(E, Er, 6, 6), -46, -40, C_ARM); part(bar(E, Er, 6, 6), 40, 46, C_ARM);
+  part(bar(Wr, Wrr, 6, 6), -46, -40, C_ARM); part(bar(Wr, Wrr, 6, 6), 40, 46, C_ARM);
+  part(circle(Wr, 20, 10), -48, 48, C_HUB);
+  // tool: level arm, camera (white) and nozzle holder (black)
+  part(rect(Wr[0], T[0] + 4, Wr[1] - 12, Wr[1] + 12), -22, 22, C_PLATE);
+  part(rect(T[0] - 48, T[0] - 18, T[1] + 16, T[1] + 42), -46, 46, C_WHITE);
+  part(rect(T[0] - 8, T[0] + 8, T[1], T[1] + 40), -9, 9, C_DARK);
+  const at = r => [r[0] * cz, r[0] * sz, r[1]];
+  return { faces: faces, tip: at(T) };
+}
+
+function ensureFloor(w, h) {            // rings and axes only change with the view: draw them once per view
+  const key = [V.az.toFixed(3), V.el.toFixed(3), w, h].join();
+  if (key === floorKey && floorCv) return floorCv;
+  floorKey = key;
+  floorCv = floorCv || document.createElement("canvas");
+  floorCv.width = w; floorCv.height = h;
+  const g = floorCv.getContext("2d");
+  const line = (pts, col, wd) => {
+    g.beginPath(); pts.forEach((P, i) => { const q = proj(P, w, h); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
+    g.strokeStyle = col; g.lineWidth = wd; g.stroke();
+  };
+  for (let r = 100; r <= 400; r += 100) {
+    const ring = []; for (let a = 0; a <= 40; a++) ring.push([r * Math.cos(a / 40 * 6.2832), r * Math.sin(a / 40 * 6.2832), 0]);
+    line(ring, r === 400 ? "#30363d" : "#21262d", 1);
+  }
+  line([[-420, 0, 0], [420, 0, 0]], "#21262d", 1); line([[0, -420, 0], [0, 420, 0]], "#21262d", 1);
+  line([[0, 0, 0], [120, 0, 0]], "#f85149", 2); line([[0, 0, 0], [0, 120, 0]], "#3fb950", 2);   // X red, Y green
+  return floorCv;
 }
 function draw3d() {
   const cv = document.getElementById("v3d"), w = cv.clientWidth, h = cv.clientHeight;
   if (!w || !h) return;
   if (cv.width !== w) cv.width = w;
   if (cv.height !== h) cv.height = h;
-  const g = cv.getContext("2d"), pt = P => proj(P, w, h);
+  const g = cv.getContext("2d");
   g.clearRect(0, 0, w, h);
-  g.lineCap = g.lineJoin = "round";
-  const line = (pts, col, wd) => {
-    g.beginPath(); pts.forEach((P, i) => { const q = pt(P); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
-    g.strokeStyle = col; g.lineWidth = wd; g.stroke();
-  };
-  for (let r = 100; r <= 400; r += 100) {                        // floor rings
-    const ring = []; for (let a = 0; a <= 48; a++) ring.push([r * Math.cos(a / 48 * 6.2832), r * Math.sin(a / 48 * 6.2832), 0]);
-    line(ring, r === 400 ? "#30363d" : "#21262d", 1);
-  }
-  line([[-420, 0, 0], [420, 0, 0]], "#30363d", 1); line([[0, -420, 0], [0, 420, 0]], "#30363d", 1);
-  line([[0, 0, 0], [90, 0, 0]], "#f85149", 2); line([[0, 0, 0], [0, 90, 0]], "#3fb950", 2);   // X red, Y green
+  g.drawImage(ensureFloor(w, h), 0, 0);
+  g.lineJoin = "round";
+  const vv = viewVec(), sc = Math.min(w, h) / 780;
   coinsNow.forEach(c => {                                        // detected coins on the table (base frame)
-    const q = pt([c[0], c[1], 0]); g.beginPath(); g.arc(q[0], q[1], 4, 0, 6.2832);
-    g.fillStyle = "#d29922"; g.fill();
+    g.beginPath();
+    for (let a = 0; a < 10; a++) { const q = proj([c[0] + 11 * Math.cos(a / 10 * 6.2832), c[1] + 11 * Math.sin(a / 10 * 6.2832), 0], w, h); a ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }
+    g.closePath(); g.fillStyle = "#d29922"; g.fill();
   });
-  const A = armPoints(shown), tp = pt(A.T), ground = pt([A.T[0], A.T[1], 0]);
-  line([A.T, [A.T[0], A.T[1], 0]], "#30363d", 1);                // plumb line + shadow of the tool
-  g.beginPath(); g.arc(ground[0], ground[1], 5, 0, 6.2832); g.fillStyle = "#30363d"; g.fill();
-  line([A.B, A.S], "#6e7681", 12);                               // column
-  line([A.S, A.E], "#58a6ff", 9);                                // upper arm
-  line([A.E, A.W], "#1f6feb", 8);                                // forearm
-  line([A.W, A.T], "#8b949e", 5);                                // level tool
-  [A.S, A.E, A.W].forEach(P => { const q = pt(P); g.beginPath(); g.arc(q[0], q[1], 6, 0, 6.2832); g.fillStyle = "#e6edf3"; g.fill(); });
-  g.beginPath(); g.arc(tp[0], tp[1], 5, 0, 6.2832); g.fillStyle = "#f85149"; g.fill();
+  const sc3 = sceneFaces(shown), tp = proj(sc3.tip, w, h), gr = proj([sc3.tip[0], sc3.tip[1], 0], w, h);
+  g.beginPath(); g.arc(gr[0], gr[1], 4 * Math.max(1, sc * 1.4), 0, 6.2832); g.fillStyle = "#30363d"; g.fill();
+  const vis = [];
+  sc3.faces.forEach(f => {
+    if (dot(f.n, vv) <= 0.001) return;                           // facing away
+    let cx = 0, cy = 0, cz = 0;
+    f.pts.forEach(p => { cx += p[0]; cy += p[1]; cz += p[2]; });
+    f.d = dot([cx, cy, cz], vv) / f.pts.length; vis.push(f);
+  });
+  vis.sort((a, b) => a.d - b.d);                                 // far to near
+  vis.forEach(f => {
+    const sh = 0.45 + 0.55 * Math.max(0, dot(f.n, LIGHT));
+    g.beginPath();
+    f.pts.forEach((p, i) => { const q = proj(p, w, h); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
+    g.closePath();
+    g.fillStyle = "rgb(" + Math.round(f.col[0] * sh) + "," + Math.round(f.col[1] * sh) + "," + Math.round(f.col[2] * sh) + ")";
+    g.fill(); g.strokeStyle = "rgba(0,0,0,.35)"; g.lineWidth = 1; g.stroke();
+  });
+  g.beginPath(); g.arc(tp[0], tp[1], 4, 0, 6.2832); g.fillStyle = "#f85149"; g.fill();   // tool tip
 }
 function animate3d() {
   animTimer = null;
@@ -611,12 +692,24 @@ function animate3d() {
   let moving = dragging;
   ["x", "y", "z"].forEach(k => {
     const want = j[k] != null ? j[k] : shown[k], d = want - shown[k];
-    if (Math.abs(d) > 0.05) { shown[k] += d * 0.3; moving = true; } else shown[k] = want;
+    if (Math.abs(d) > 0.05) { shown[k] += d * 0.35; moving = true; } else shown[k] = want;
   });
   draw3d();
-  if (moving) animTimer = setTimeout(animate3d, 50);            // ~20 fps only while something changes
+  if (moving) animTimer = setTimeout(animate3d, 66);            // ~15 fps only while something changes
 }
 function kick3d() { if (view3d && !animTimer) animTimer = setTimeout(animate3d, 0); }
+
+// While the 3D view is open follow the arm through /pose (joint angles only: no system metrics, no GPIO reads).
+let poseBusy = false;
+async function pollPose() {
+  if (!view3d || poseBusy) return;
+  poseBusy = true;
+  try {
+    const p = await (await fetch("/pose")).json();
+    last.arm = last.arm || {}; last.arm.joints = p.joints; kick3d();
+  } catch (e) {} finally { poseBusy = false; }
+}
+setInterval(pollPose, 300);
 
 document.getElementById("v3dbtn").onclick = () => {
   view3d = !view3d;
@@ -638,7 +731,6 @@ document.getElementById("v3dbtn").onclick = () => {
     px = x; py = y; kick3d();
   });
 })();
-setInterval(() => { if (view3d) tick(); }, 400);                 // follow the arm closely while the 3D view is open
 </script></body></html>""".replace("__GEOM__", json.dumps({
     "L1": kinematics.UPPER_ARM_MM, "LF": kinematics.FOREARM_MM,
     "LT": kinematics.TOOL_REACH_MM, "D": kinematics.V_OFFSET_MM}))

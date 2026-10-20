@@ -1,5 +1,7 @@
 # Gripper research: suction cup for coins
 
+> The build that follows from this research is in [`PUMP.md`](PUMP.md).
+
 Notes from a web search (2026-10-14) on how to pick up coins. Nothing here is
 built yet; this records the options and the decision so far.
 

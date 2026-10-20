@@ -13,6 +13,7 @@ over HTTP instead of by claiming GPIO directly:
 
     GET  /                 -> dashboard page
     GET  /status           -> system + live arm state (JSON)
+    GET  /pose             -> joint angles + moving only (cheap; feeds the dashboard 3D view)
     POST /move             -> {"axis":"z","steps":800,"pps":4000}
     POST /detect           -> coins in camera frame (+ base_mm when camera_calib.json exists)
     POST /jog              -> hold-to-move: {"rates":{"x":deg/s,..}} or {"cart":{"x":mm/s,..}} (+"frame":"arm": x=along arm, y=sideways), repeat within ~0.25s
@@ -161,6 +162,8 @@ def make_handler(ctrl, camera):
         def do_GET(self):
             if self.path.startswith("/status"):
                 self._send(json.dumps(build_status(ctrl, camera)))
+            elif self.path.startswith("/pose"):            # joint angles only: cheap, for the 3D view
+                self._send(json.dumps({"joints": ctrl.arm.angles(), "moving": ctrl.moving}))
             elif self.path.startswith("/camera"):
                 self._stream_mjpeg()
             elif self.path.startswith("/snapshot"):
