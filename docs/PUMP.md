@@ -61,8 +61,8 @@ the trapezoidal planner stays far below. Target: **at least -40 kPa at the cup w
 
 ### Where the parts go
 
-**The pump, valve, sensor and driver board live at the base, not on the arm.** Only the nozzle (about 12 g
-printed + 3 g of tube, spring and collar) and the hose reach the tip. A 12 V R385-class pump weighs 60-80 g
+**The pump, valve, sensor and driver board live at the base, not on the arm.** Only the nozzle (about 6 g
+printed housing + 4 g of collar, tube and spring) and the hose reach the tip. A 12 V R385-class pump weighs 60-80 g
 and its vibration would shake the camera. Leave a loop of hose at the shoulder and the elbow so neither axis pulls
 on it, and route it along the arm with the existing cable-tie habit. The base turns +-180 deg: either mount the
 pod on the rotating part, or leave a hose loop that unwinds through the column.
@@ -134,11 +134,11 @@ pod on the rotating part, or leave a hose loop that unwinds through the column.
 ```
 
 Run `python cad/pickup_nozzle.py` for the numbers; its asserts check that the spring never goes solid and keeps
-a preload. With the defaults: housing 35 mm below the flange, **the cup end 45 mm below the block, the same as the
+a preload. With the defaults: housing 36 mm below the flange, **the tube end 45 mm below the block, the same as the
 old holder**, so the fitted kinematics and the camera-mount calculations (nozzle out of the depth view) do not
-change. The tube is cut about 55 mm long; the collar is clamped about 34 mm from its top end.
+change. The tube is cut **57 mm** long, its top 4 mm above the plate (room for the hose); the collar is clamped **35 mm** from the top end.
 
-- Contact force: spring preload ~0.3 N at rest, ~1.4 N at full travel (*estimate* with a 0.12 N/mm spring):
+- Contact force: spring preload ~0.25 N at rest (2 mm), ~1.3 N at full travel (*estimate* with a 0.12 N/mm spring):
   enough to seat the cup, soft enough not to push the coin around.
 - **Assembly:** ream both bearings with a 4 mm drill; drop the spring in through the side window, thread the tube
   through, fit the collar (nut in its pocket) with the tube at rest, tighten the grub. Slide the tube by hand: it

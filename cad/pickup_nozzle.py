@@ -32,8 +32,8 @@ COLLAR_T, COLLAR_OD = 6.0, 10.0
 CAVITY_D = 12.0          # spring + collar chamber
 TUBE_OD = 17.0
 WINDOW_W = 7.0           # side opening on +Y to reach the collar's grub screw and fit the spring
-PROTRUDE = 10.0          # shaft end below the housing: the cup's neck sits on it (cup tip = nominal tip height)
-TOP_REST = -10.0         # shaft top at rest, above the plate top (s = -(BLOCK_T + PLATE_T)) so the hose clears it
+PROTRUDE = 9.0           # shaft end below the housing: the cup's neck sits on it (cup tip = nominal tip height)
+TOP_REST = -12.0         # shaft top at rest, above the plate top (s = -(BLOCK_T + PLATE_T)) so the hose clears it
 GRUB = 3.0               # M3 grub screw clamps the collar to the tube
 
 SPAN = BEARING + (TRAVEL + COLLAR_T + SPRING_SOLID + 1.0) + BEARING   # housing length below the flange face
